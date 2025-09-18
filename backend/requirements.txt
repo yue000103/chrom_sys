@@ -1,0 +1,13 @@
+fastapi==0.104.1
+uvicorn==0.24.0
+paho-mqtt==1.6.1
+pydantic==2.5.0
+python-multipart==0.0.6
+aiofiles==23.2.1
+python-dotenv==1.0.0
+pyserial==3.5
+requests==2.31.0
+schedule==1.2.0
+# SQLite is built into Python, no additional package needed
+# Optional: for advanced SQLite features
+aiosqlite==0.19.0

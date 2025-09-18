@@ -1,0 +1,35 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(D:backchromatography_systembackendvenvScriptspython.exe main.py)",
+      "Bash(python:*)",
+      "Bash(timeout:*)",
+      "Bash(D:backchromatography_systembackendvenvScriptspython.exe D:backchromatography_systembackendmain.py)",
+      "Bash(xargs:*)",
+      "Bash(curl:*)",
+      "Bash(sed:*)",
+      "Bash(pip install:*)",
+      "Read(//d/back/chromatography_system/**)",
+      "Bash(tasklist)",
+      "Bash(findstr:*)",
+      "Bash(taskkill:*)",
+      "Bash(D:backchromatography_systembackendvenvScriptspython.exe main_simple.py)",
+      "Bash(D:/back/chromatography_system/backend/venv/Scripts/python.exe main_simple.py)",
+      "Bash(sqlite3:*)",
+      "Bash(D:/back/chromatography_system/backend/venv/Scripts/python.exe main.py)",
+      "Read(//d/back/chromatograph/src/devices/sqllite/**)",
+      "Bash(D:/back/chromatography_system/backend/venv/Scripts/python.exe D:/back/chromatography_system/backend/check_db_tables.py)",
+      "Bash(D:/back/chromatography_system/backend/venv/Scripts/python.exe database_utils.py)",
+      "Bash(D:/back/chromatography_system/backend/venv/Scripts/python.exe database_examples.py)",
+      "Bash(D:/back/chromatography_system/backend/venv/Scripts/python.exe -c \"import sys; sys.path.insert(0, ''''D:/back/chromatography_system/backend''''); import asyncio; from api.data_collection import get_detector_data; asyncio.run(get_detector_data(''''detector_1''''))\")",
+      "Bash(D:/back/chromatography_system/backend/venv/Scripts/python.exe test_api.py)",
+      "Bash(D:/back/chromatography_system/backend/venv/Scripts/python.exe -c \"import main; print(''Publishing status route exists:'', hasattr(main.app, ''routes'')); import api.data_collection as dc; print(''Data collection module loaded''); print(''Detector endpoint exists:'', hasattr(dc, ''get_detector_data''))\")",
+      "Bash(D:/back/chromatography_system/backend/venv/Scripts/python.exe -m uvicorn main:app --host 0.0.0.0 --port 8008 --reload=false)",
+      "Bash(D:/back/chromatography_system/backend/venv/Scripts/python.exe -m uvicorn main:app --host 0.0.0.0 --port 8008)",
+      "Bash(netstat:*)",
+      "Bash(D:/back/chromatography_system/backend/venv/Scripts/python.exe -m uvicorn main:app --host 0.0.0.0 --port 8009)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
