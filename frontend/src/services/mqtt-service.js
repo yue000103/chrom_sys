@@ -34,7 +34,7 @@ class MQTTService {
                     clientId: 'vue_client_',
                     clean: true,
                     connectTimeout: 4000,
-                    reconnectPeriod: 1000,
+                    reconnectPeriod: 0, // 禁用自动重连
                 })
 
         this.client.on('connect', () => {
@@ -58,15 +58,7 @@ class MQTTService {
           this.notifyStatusChange({ connected: false })
         })
 
-        this.client.on('reconnect', () => {
-          this.reconnectAttempts++
-          console.log(`MQTT重连中... (第${this.reconnectAttempts}次)`)
-
-          if (this.reconnectAttempts > this.maxReconnectAttempts) {
-            console.error('MQTT重连失败，超过最大重试次数')
-            this.client.end()
-          }
-        })
+        // 不再自动重连，由用户控制重连
 
         this.client.on('offline', () => {
           console.log('MQTT客户端离线')
@@ -187,6 +179,14 @@ class MQTTService {
       this.notifyStatusChange({ connected: false })
       console.log('MQTT客户端已断开')
     }
+  }
+
+  // 手动重连方法
+  async reconnect(options = {}) {
+    console.log('用户手动重连MQTT...')
+    await this.disconnect()
+    this.reconnectAttempts = 0
+    return this.connect(options)
   }
 
   onStatusChange(callback) {

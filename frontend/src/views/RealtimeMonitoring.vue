@@ -50,7 +50,7 @@
                                     v-model="timeRange"
                                     @change="updateTimeRange"
                                     size="small"
-                                    style="min-width: 120px;"
+                                    style="min-width: 120px"
                                 >
                                     <el-option label="最近5分钟" value="5" />
                                     <el-option label="最近10分钟" value="10" />
@@ -102,15 +102,15 @@
                                     ></span>
                                     <span class="legend-text">
                                         <template v-if="series.key === 'uv254'">
-                                            {{ series.label }}：{{
-                                                currentValues.uv254.toFixed(3)
+                                            UV{{ wavelengths.uv1 }}：{{
+                                                currentValues.uv254.toFixed(5)
                                             }}
                                         </template>
                                         <template
                                             v-else-if="series.key === 'uv280'"
                                         >
-                                            {{ series.label }}：{{
-                                                currentValues.uv280.toFixed(3)
+                                            UV{{ wavelengths.uv2 }}：{{
+                                                currentValues.uv280.toFixed(5)
                                             }}
                                         </template>
                                         <template
@@ -159,6 +159,11 @@
                                                     0
                                                 )
                                             }}
+                                        </template>
+                                        <template
+                                            v-else-if="series.key === 'flowRate'"
+                                        >
+                                            {{ series.label }}：12.0
                                         </template>
                                         <template v-else>
                                             {{ series.label }}
@@ -854,6 +859,61 @@
                 </el-card>
             </el-col>
         </el-row>
+
+        <!-- MQTT连接失败弹窗 -->
+        <el-dialog
+            v-model="showMqttConnectionDialog"
+            title="MQTT连接失败"
+            width="450px"
+            :before-close="handleMqttCancel"
+            :close-on-click-modal="false"
+            :close-on-press-escape="false"
+        >
+            <div class="mqtt-connection-dialog">
+                <div class="error-icon">
+                    <el-icon size="48" color="#f56c6c">
+                        <Warning />
+                    </el-icon>
+                </div>
+                <div class="error-content">
+                    <h3>MQTT连接失败</h3>
+                    <p class="error-message">
+                        无法连接到MQTT服务器，这可能影响实时数据的接收。
+                    </p>
+                    <div class="error-details" v-if="mqttConnectionError">
+                        <details>
+                            <summary>查看详细错误信息</summary>
+                            <pre>{{ mqttConnectionError.message || mqttConnectionError }}</pre>
+                        </details>
+                    </div>
+                    <div class="connection-options">
+                        <p>您可以选择：</p>
+                        <ul>
+                            <li>重新尝试连接MQTT服务器</li>
+                            <li>取消连接，继续使用模拟数据</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <template #footer>
+                <div class="dialog-footer">
+                    <el-button
+                        @click="handleMqttCancel"
+                        :disabled="mqttReconnecting"
+                    >
+                        取消连接
+                    </el-button>
+                    <el-button
+                        type="primary"
+                        @click="handleMqttReconnect"
+                        :loading="mqttReconnecting"
+                    >
+                        {{ mqttReconnecting ? '重连中...' : '重新连接' }}
+                    </el-button>
+                </div>
+            </template>
+        </el-dialog>
     </div>
 </template>
 
@@ -864,6 +924,7 @@ import { useDeviceStatus } from "@/composables/useDeviceStatus.js";
 import { useTubeRack } from "@/composables/useTubeRack.js";
 import { usePeakDetection } from "@/composables/usePeakDetection.js";
 import { useGradientControl } from "@/composables/useGradientControl.js";
+import mqttService from "@/services/mqtt-service.js";
 
 export default {
     name: "RealtimeMonitoring",
@@ -895,13 +956,18 @@ export default {
             updateChart,
             startChart,
             stopChart,
-            restartChart,
+            restartChart: originalRestartChart,
             toggleSeries,
             switchDetector,
             updateTimeRange,
             resetZoom,
             exportChart,
         } = useRealtimeChart(currentValues);
+
+        // 包装restartChart方法，在重新开始时获取波长
+        const restartChart = async () => {
+            await originalRestartChart(fetchWavelengths);
+        };
 
         const {
             tubes,
@@ -970,6 +1036,34 @@ export default {
 
         // 任务选择状态
         const selectedTaskIds = ref([]);
+
+        // 检测器波长状态
+        const wavelengths = ref({
+            uv1: 254, // 第一个UV波长，默认254
+            uv2: 280  // 第二个UV波长，默认280
+        });
+
+        // MQTT连接失败弹窗状态
+        const showMqttConnectionDialog = ref(false);
+        const mqttConnectionError = ref(null);
+        const mqttReconnecting = ref(false);
+
+        // 获取检测器波长的方法
+        const fetchWavelengths = async () => {
+            try {
+                const response = await fetch('http://0.0.0.0:8008/api/data/device/detector_1/parameter/wavelength');
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.value && Array.isArray(data.value)) {
+                        wavelengths.value.uv1 = data.value[0] || 254;
+                        wavelengths.value.uv2 = data.value[1] || 280;
+                        console.log('检测器波长已更新:', wavelengths.value);
+                    }
+                }
+            } catch (error) {
+                console.error('获取检测器波长失败:', error);
+            }
+        };
 
         // 主要控制方法
         const togglePause = () => {
@@ -1046,6 +1140,35 @@ export default {
             return colorMap[status] || "#909399";
         };
 
+        // MQTT连接失败处理方法
+        const handleMqttConnectionError = (error) => {
+            console.error('MQTT连接失败:', error);
+            mqttConnectionError.value = error;
+            showMqttConnectionDialog.value = true;
+        };
+
+        // 用户选择重新连接MQTT
+        const handleMqttReconnect = async () => {
+            mqttReconnecting.value = true;
+            try {
+                await mqttService.reconnect();
+                showMqttConnectionDialog.value = false;
+                mqttConnectionError.value = null;
+            } catch (error) {
+                console.error('MQTT重连失败:', error);
+                mqttConnectionError.value = error;
+            } finally {
+                mqttReconnecting.value = false;
+            }
+        };
+
+        // 用户选择取消MQTT连接
+        const handleMqttCancel = () => {
+            showMqttConnectionDialog.value = false;
+            mqttConnectionError.value = null;
+            console.log('用户取消MQTT连接');
+        };
+
         // 数据更新定时器
         let dataUpdateInterval = null;
 
@@ -1057,6 +1180,13 @@ export default {
             // 初始化D3图表
             await nextTick();
             initChart();
+
+            // 监听MQTT连接状态变化
+            mqttService.onStatusChange((status) => {
+                if (!status.connected && status.error && !showMqttConnectionDialog.value) {
+                    handleMqttConnectionError(status.error);
+                }
+            });
 
             // 模拟数据更新
             dataUpdateInterval = setInterval(() => {
@@ -1102,6 +1232,7 @@ export default {
         return {
             // 状态
             isPaused,
+            wavelengths,
 
             // 设备状态Hook
             currentValues,
@@ -1200,6 +1331,13 @@ export default {
             getTaskStatusType,
             getTaskStatusText,
             getProgressColor,
+
+            // MQTT连接失败处理
+            showMqttConnectionDialog,
+            mqttConnectionError,
+            mqttReconnecting,
+            handleMqttReconnect,
+            handleMqttCancel,
         };
     },
 };
@@ -1457,6 +1595,10 @@ export default {
     background-color: #e6a23c;
 }
 
+.legend-color.flowRate {
+    background-color: #8b5cf6;
+}
+
 .legend-text {
     font-weight: 500;
     user-select: none;
@@ -1611,6 +1753,10 @@ export default {
 
 .chromatogram-chart .gradient-d-line {
     filter: drop-shadow(0 1px 1px rgba(144, 147, 153, 0.3));
+}
+
+.chromatogram-chart .flowRate-line {
+    filter: drop-shadow(0 1px 2px rgba(139, 92, 246, 0.3));
 }
 
 .chart-placeholder {
@@ -2510,5 +2656,89 @@ export default {
 .task-summary {
     text-align: center;
     padding: 40px 0;
+}
+
+/* MQTT连接失败弹窗样式 */
+.mqtt-connection-dialog {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 20px 0;
+}
+
+.mqtt-connection-dialog .error-icon {
+    margin-bottom: 16px;
+}
+
+.mqtt-connection-dialog .error-content {
+    text-align: center;
+    width: 100%;
+}
+
+.mqtt-connection-dialog h3 {
+    margin: 0 0 12px 0;
+    color: #f56c6c;
+    font-size: 18px;
+    font-weight: 600;
+}
+
+.mqtt-connection-dialog .error-message {
+    margin: 0 0 16px 0;
+    color: #666;
+    line-height: 1.6;
+}
+
+.mqtt-connection-dialog .error-details {
+    margin: 16px 0;
+    text-align: left;
+}
+
+.mqtt-connection-dialog .error-details details {
+    background: #f8f9fa;
+    border: 1px solid #e9ecef;
+    border-radius: 4px;
+    padding: 8px 12px;
+}
+
+.mqtt-connection-dialog .error-details summary {
+    cursor: pointer;
+    color: #666;
+    font-size: 14px;
+    margin-bottom: 8px;
+}
+
+.mqtt-connection-dialog .error-details pre {
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    padding: 8px;
+    margin: 8px 0 0 0;
+    font-size: 12px;
+    color: #d32f2f;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.mqtt-connection-dialog .connection-options {
+    margin: 16px 0 0 0;
+    text-align: left;
+}
+
+.mqtt-connection-dialog .connection-options p {
+    margin: 0 0 8px 0;
+    color: #666;
+    font-weight: 500;
+}
+
+.mqtt-connection-dialog .connection-options ul {
+    margin: 0;
+    padding-left: 20px;
+    color: #666;
+}
+
+.mqtt-connection-dialog .connection-options li {
+    margin-bottom: 4px;
+    line-height: 1.5;
 }
 </style>

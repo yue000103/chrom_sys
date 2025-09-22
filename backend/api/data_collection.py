@@ -1,6 +1,6 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 router = APIRouter()  # Data collection API routes
 
@@ -76,3 +76,89 @@ async def get_all_device_data():
         "devices": host_processor.get_device_data(),
         "timestamp": datetime.now().isoformat()
     }
+
+@router.get("/device/{device_name}/parameter/{parameter_name}")
+async def get_device_parameter(device_name: str, parameter_name: str):
+    """
+    Generic interface to get specific parameter information for a device
+    Args:
+        device_name: Name of the device (e.g., 'detector_1', 'pump_1')
+        parameter_name: Name of the parameter (e.g., 'wavelength', 'flow_rate', 'pressure')
+    Returns:
+        Parameter value and metadata for the specified device
+    """
+    host_processor = get_host_processor()
+
+    if not host_processor:
+        raise HTTPException(status_code=503, detail="Data processor not initialized")
+
+    try:
+        # Get device parameter from processor
+        parameter_data = host_processor.get_device_parameter(device_name, parameter_name)
+
+        if parameter_data is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Parameter '{parameter_name}' not found for device '{device_name}'"
+            )
+
+        return {
+            "device_name": device_name,
+            "parameter_name": parameter_name,
+            "value": parameter_data,
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except AttributeError:
+        # Fallback if host_processor doesn't have get_device_parameter method
+        device_data = host_processor.get_device_data()
+
+        if device_name not in device_data:
+            raise HTTPException(status_code=404, detail=f"Device '{device_name}' not found")
+
+        device_info = device_data[device_name]
+
+        if parameter_name not in device_info:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Parameter '{parameter_name}' not found for device '{device_name}'"
+            )
+
+        return {
+            "device_name": device_name,
+            "parameter_name": parameter_name,
+            "value": device_info[parameter_name],
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error retrieving parameter: {str(e)}")
+
+@router.get("/device/{device_name}/parameters")
+async def get_device_all_parameters(device_name: str):
+    """
+    Get all available parameters for a specific device
+    Args:
+        device_name: Name of the device
+    Returns:
+        All parameters and their values for the specified device
+    """
+    host_processor = get_host_processor()
+
+    if not host_processor:
+        raise HTTPException(status_code=503, detail="Data processor not initialized")
+
+    try:
+        device_data = host_processor.get_device_data()
+
+        if device_name not in device_data:
+            raise HTTPException(status_code=404, detail=f"Device '{device_name}' not found")
+
+        return {
+            "device_name": device_name,
+            "parameters": device_data[device_name],
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error retrieving device parameters: {str(e)}")

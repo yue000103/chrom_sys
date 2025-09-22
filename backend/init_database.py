@@ -101,8 +101,10 @@ async def create_database_schema(db_path: Path):
                 run_time REAL,
                 status VARCHAR(20) DEFAULT 'active',
                 created_by VARCHAR(100),
+                smiles_id INTEGER,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (smiles_id) REFERENCES smiles_management (smiles_id)
             )
         ''')
 

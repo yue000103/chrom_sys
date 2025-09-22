@@ -409,3 +409,258 @@ class TubeManager:
             )
         except Exception as e:
             logger.error(f"记录试管事件失败: {e}")
+
+
+class TubeCollectionManager:
+    """试管收集管理器 - 专门处理实验过程中的试管收集逻辑"""
+
+    def __init__(self, flow_rate_ml_min: float, collection_volume_ml: float):
+        """
+        初始化试管收集管理器
+
+        Args:
+            flow_rate_ml_min: 流速 (ml/min)
+            collection_volume_ml: 每根试管收集体积 (ml)
+        """
+        self.flow_rate = flow_rate_ml_min
+        self.collection_volume = collection_volume_ml
+        self.collection_time_per_tube = self._calculate_collection_time()
+
+        # 验证参数
+        if not self.validate_tube_parameters(flow_rate_ml_min, collection_volume_ml):
+            raise ValueError(f"试管参数无效: flow_rate={flow_rate_ml_min}, collection_volume={collection_volume_ml}")
+
+        logger.info(f"试管收集管理器初始化: 流速={self.flow_rate}ml/min, "
+                   f"收集体积={self.collection_volume}ml, "
+                   f"每管时间={self.collection_time_per_tube:.2f}秒")
+
+    def _calculate_collection_time(self) -> float:
+        """
+        计算每根试管收集时间(秒)
+
+        Returns:
+            float: 收集时间(秒)
+        """
+        if self.flow_rate <= 0:
+            raise ValueError("流速必须大于0")
+        return (self.collection_volume / self.flow_rate) * 60
+
+    def is_collection_complete(self, tube_start_time: float, current_time: float) -> bool:
+        """
+        积分函数 - 检查试管收集是否完成
+
+        Args:
+            tube_start_time: 试管开始收集时间(相对于实验开始的秒数)
+            current_time: 当前时间(相对于实验开始的秒数)
+
+        Returns:
+            bool: True表示收集完成，需要切换试管
+        """
+        elapsed = current_time - tube_start_time
+        is_complete = elapsed >= self.collection_time_per_tube
+
+        if is_complete:
+            logger.debug(f"试管收集完成: 已用时{elapsed:.2f}秒, 预期{self.collection_time_per_tube:.2f}秒")
+
+        return is_complete
+
+    def create_tube_data(self, start_time: float, end_time: float, tube_id: int) -> List[float]:
+        """
+        创建试管数据 - 格式: [start_time, end_time, tube_id]
+
+        Args:
+            start_time: 开始时间(秒)
+            end_time: 结束时间(秒)
+            tube_id: 试管ID
+
+        Returns:
+            List[float]: [开始时间, 结束时间, 试管ID]
+        """
+        tube_data = [start_time, end_time, tube_id]
+        logger.debug(f"创建试管数据: {tube_data}")
+        return tube_data
+
+    async def switch_to_tube(self, tube_id: int) -> bool:
+        """
+        切换到指定试管 - 执行具体的硬件切换操作
+
+        Args:
+            tube_id: 目标试管ID (1-40)
+
+        Returns:
+            bool: 切换是否成功
+        """
+        try:
+            # 验证试管ID
+            if not self._validate_tube_id(tube_id):
+                logger.error(f"试管ID无效: {tube_id}")
+                return False
+
+            logger.info(f"开始切换到试管 {tube_id}")
+
+            # 这里放置具体的硬件切换逻辑
+            # 比如控制机械臂、阀门、收集器位置等
+
+            # 步骤1: 停止当前收集
+            await self._stop_current_collection()
+
+            # 步骤2: 移动到目标试管位置
+            await self._move_to_tube_position(tube_id)
+
+            # 步骤3: 开始新试管的收集
+            await self._start_tube_collection(tube_id)
+
+            logger.info(f"成功切换到试管 {tube_id}")
+            return True
+
+        except Exception as e:
+            logger.error(f"切换试管失败: tube_id={tube_id}, error={e}")
+            return False
+
+    async def _stop_current_collection(self):
+        """停止当前试管的收集"""
+        # 模拟停止收集操作
+        import asyncio
+        await asyncio.sleep(0.05)  # 50ms
+        logger.debug("停止当前试管收集")
+
+    async def _move_to_tube_position(self, tube_id: int):
+        """移动到目标试管位置"""
+        # 模拟机械移动操作
+        # 实际实现可能包括：
+        # - 计算试管架位置
+        # - 控制X/Y轴移动
+        # - 等待移动完成
+        import asyncio
+        await asyncio.sleep(0.1)  # 100ms移动时间
+        logger.debug(f"移动到试管 {tube_id} 位置")
+
+    async def _start_tube_collection(self, tube_id: int):
+        """开始新试管的收集"""
+        # 模拟开始收集操作
+        # 实际实现可能包括：
+        # - 打开阀门
+        # - 启动收集模式
+        # - 确认收集状态
+        import asyncio
+        await asyncio.sleep(0.05)  # 50ms
+        logger.debug(f"开始试管 {tube_id} 收集")
+
+    def _validate_tube_id(self, tube_id: int) -> bool:
+        """
+        验证试管ID是否有效
+
+        Args:
+            tube_id: 试管ID
+
+        Returns:
+            bool: ID是否有效
+        """
+        return 1 <= tube_id <= 40
+
+    def get_collection_time_per_tube(self) -> float:
+        """
+        获取每根试管的收集时间
+
+        Returns:
+            float: 收集时间(秒)
+        """
+        return self.collection_time_per_tube
+
+    def get_total_collection_time(self, tube_count: int = 40) -> float:
+        """
+        获取总收集时间
+
+        Args:
+            tube_count: 试管数量
+
+        Returns:
+            float: 总时间(秒)
+        """
+        return self.collection_time_per_tube * tube_count
+
+    def get_collection_progress(self, elapsed_time: float, tube_start_time: float) -> float:
+        """
+        获取当前试管的收集进度
+
+        Args:
+            elapsed_time: 实验总耗时
+            tube_start_time: 当前试管开始时间
+
+        Returns:
+            float: 进度百分比 (0-100)
+        """
+        tube_elapsed = elapsed_time - tube_start_time
+        progress = min((tube_elapsed / self.collection_time_per_tube) * 100, 100.0)
+        return progress
+
+    def estimate_remaining_time(self, current_tube_id: int, tube_start_time: float, current_time: float) -> float:
+        """
+        估算剩余时间
+
+        Args:
+            current_tube_id: 当前试管ID
+            tube_start_time: 当前试管开始时间
+            current_time: 当前时间
+
+        Returns:
+            float: 剩余时间(秒)
+        """
+        # 当前试管剩余时间
+        current_tube_elapsed = current_time - tube_start_time
+        current_tube_remaining = max(0, self.collection_time_per_tube - current_tube_elapsed)
+
+        # 剩余试管时间
+        remaining_tubes = max(0, 40 - current_tube_id)
+        remaining_tubes_time = remaining_tubes * self.collection_time_per_tube
+
+        return current_tube_remaining + remaining_tubes_time
+
+    @staticmethod
+    def validate_tube_parameters(flow_rate: float, collection_volume: float) -> bool:
+        """
+        验证试管参数
+
+        Args:
+            flow_rate: 流速
+            collection_volume: 收集体积
+
+        Returns:
+            bool: 参数是否有效
+        """
+        return flow_rate > 0 and collection_volume > 0
+
+    def get_status_info(self) -> Dict[str, Any]:
+        """
+        获取试管管理器状态信息
+
+        Returns:
+            Dict: 状态信息
+        """
+        return {
+            "flow_rate_ml_min": self.flow_rate,
+            "collection_volume_ml": self.collection_volume,
+            "collection_time_per_tube_sec": self.collection_time_per_tube,
+            "total_collection_time_sec": self.get_total_collection_time(),
+            "max_tube_count": 40
+        }
+
+    def __repr__(self):
+        return (f"TubeCollectionManager(flow_rate={self.flow_rate}, "
+                f"collection_volume={self.collection_volume}, "
+                f"collection_time={self.collection_time_per_tube:.2f}s)")
+
+
+class TubeManagerError(Exception):
+    """试管管理器异常"""
+    pass
+
+
+class TubeCollectionError(TubeManagerError):
+    """试管收集异常"""
+    pass
+
+
+class TubeSwitchError(TubeManagerError):
+    """试管切换异常"""
+    pass

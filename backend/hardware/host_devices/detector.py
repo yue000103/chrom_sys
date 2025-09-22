@@ -24,8 +24,8 @@ class DetectorController:
         self.is_connected = False
         self.is_detecting = False
         # 双通道波长配置
-        self.wavelength_a = 254.0  # A通道波长
-        self.wavelength_b = 280.0  # B通道波长
+        self.wavelength_a = 120.0  # A通道波长
+        self.wavelength_b = 254.0  # B通道波长
         self.wavelength = 254.0  # 保留兼容性
         self.mock_time = 0  # 用于模拟时间进程
     
@@ -38,22 +38,40 @@ class DetectorController:
         else:
             pass
     
-    async def set_wavelength(self, wavelength: float, channel: str = 'A') -> bool:
+    async def set_wavelength(self, wavelength, channel: str = 'A') -> bool:
         """
         设置检测波长
-        :param wavelength: 波长(nm)
-        :param channel: 通道 'A' 或 'B'
+        :param wavelength: 波长值，可以是单个数值(float)或数组([wavelength_a, wavelength_b])
+        :param channel: 通道 'A' 或 'B' (仅在传入单个数值时使用)
         :return: 设置结果
         """
         if self.mock:
-            if 190 <= wavelength <= 800:
-                if channel == 'A':
-                    self.wavelength_a = wavelength
-                    self.wavelength = wavelength  # 兼容旧代码
-                elif channel == 'B':
-                    self.wavelength_b = wavelength
-                await asyncio.sleep(0.1)
-                return True
+            # 如果传入的是数组
+            if isinstance(wavelength, (list, tuple)) and len(wavelength) >= 2:
+                wavelength_a, wavelength_b = wavelength[0], wavelength[1]
+
+                # 验证波长范围
+                if 190 <= wavelength_a <= 800 and 190 <= wavelength_b <= 800:
+                    self.wavelength_a = float(wavelength_a)
+                    self.wavelength_b = float(wavelength_b)
+                    self.wavelength = float(wavelength_a)  # 兼容旧代码，使用A通道
+                    await asyncio.sleep(0.1)
+                    return True
+                return False
+
+            # 如果传入的是单个数值（保持向后兼容）
+            elif isinstance(wavelength, (int, float)):
+                if 190 <= wavelength <= 800:
+                    if channel == 'A':
+                        self.wavelength_a = float(wavelength)
+                        self.wavelength = float(wavelength)  # 兼容旧代码
+                    elif channel == 'B':
+                        self.wavelength_b = float(wavelength)
+                    await asyncio.sleep(0.1)
+                    return True
+                return False
+
+            # 无效输入
             return False
         else:
             pass
@@ -135,6 +153,13 @@ class DetectorController:
             return True
         else:
             pass
+
+    def get_wavelength(self) -> List[float]:
+        """
+        获取当前设置的波长
+        :return: 返回双通道波长列表 [A通道波长, B通道波长]
+        """
+        return [self.wavelength_a, self.wavelength_b]
     
     async def get_status(self) -> Dict[str, Any]:
         """

@@ -46,13 +46,15 @@ class ChromatographyDB:
             'device_config': 'device_config',
             'sensor_data': 'sensor_data',
             'experiments': 'experiments',
-            'analysis_methods': 'analysis_methods',
             'chromatography_peaks': 'chromatography_peaks',
             'system_logs': 'system_logs',
-            'calibration_data': 'calibration_data',
-            'tube_info': 'tube_info',
+            'rack_info': 'rack_info',
             'mqtt_messages': 'mqtt_messages',
-            'data_quality_metrics': 'data_quality_metrics'
+            'data_quality_metrics': 'data_quality_metrics',
+            'column_info': 'column_info',
+            'tube_operations': 'tube_operations',
+            'smiles_management': 'smiles_management',
+            'methods': 'methods'
         }
 
         logger.info(f"数据库初始化: {self.db_path}")
@@ -437,6 +439,192 @@ class ChromatographyDB:
             order_by="timestamp DESC",
             limit=limit
         )
+
+    def get_smiles_data(self, smiles_id: Optional[int] = None,
+                       compound_name: Optional[str] = None,
+                       description_search: Optional[str] = None) -> List[Dict]:
+        """获取SMILES数据"""
+        conditions = []
+        params = []
+
+        if smiles_id:
+            conditions.append("smiles_id = ?")
+            params.append(smiles_id)
+
+        if compound_name:
+            conditions.append("compound_name LIKE ?")
+            params.append(f"%{compound_name}%")
+
+        if description_search:
+            conditions.append("smiles_description LIKE ?")
+            params.append(f"%{description_search}%")
+
+        where_condition = " AND ".join(conditions) if conditions else None
+
+        return self.query_data(
+            self.TABLES['smiles_management'],
+            where_condition=where_condition,
+            where_params=tuple(params),
+            order_by="smiles_id ASC"
+        )
+
+    def add_smiles_record(self, smiles_description: str, smiles_string: Optional[str] = None,
+                         molecular_formula: Optional[str] = None, molecular_weight: Optional[float] = None,
+                         compound_name: Optional[str] = None, cas_number: Optional[str] = None) -> bool:
+        """添加SMILES记录"""
+        data = {
+            'smiles_description': smiles_description,
+            'smiles_string': smiles_string,
+            'molecular_formula': molecular_formula,
+            'molecular_weight': molecular_weight,
+            'compound_name': compound_name,
+            'cas_number': cas_number
+        }
+
+        return self.insert_data(self.TABLES['smiles_management'], data)
+
+    def update_smiles_record(self, smiles_id: int, **kwargs) -> bool:
+        """更新SMILES记录"""
+        if 'updated_at' not in kwargs:
+            kwargs['updated_at'] = datetime.now().isoformat()
+
+        affected = self.update_data(
+            self.TABLES['smiles_management'],
+            kwargs,
+            "smiles_id = ?",
+            (smiles_id,)
+        )
+        return affected > 0
+
+    def get_column_info(self, column_id: Optional[int] = None) -> List[Dict]:
+        """获取柱子信息"""
+        if column_id:
+            return self.query_data(self.TABLES['column_info'],
+                                 where_condition="column_id = ?",
+                                 where_params=(column_id,))
+        return self.query_data(self.TABLES['column_info'], order_by="column_id ASC")
+
+    def get_tube_operations(self, tube_id: Optional[str] = None,
+                           operation_type: Optional[str] = None) -> List[Dict]:
+        """获取试管操作记录"""
+        conditions = []
+        params = []
+
+        if tube_id:
+            conditions.append("tube_id = ?")
+            params.append(tube_id)
+
+        if operation_type:
+            conditions.append("operation_type = ?")
+            params.append(operation_type)
+
+        where_condition = " AND ".join(conditions) if conditions else None
+
+        return self.query_data(
+            self.TABLES['tube_operations'],
+            where_condition=where_condition,
+            where_params=tuple(params),
+            order_by="created_at DESC"
+        )
+
+    def get_rack_info(self, rack_id: Optional[str] = None) -> List[Dict]:
+        """获取试管架信息"""
+        if rack_id:
+            return self.query_data(self.TABLES['rack_info'],
+                                 where_condition="rack_id = ?",
+                                 where_params=(rack_id,))
+        return self.query_data(self.TABLES['rack_info'])
+
+    def get_methods(self, method_id: Optional[int] = None,
+                   method_name: Optional[str] = None,
+                   gradient_mode: Optional[str] = None) -> List[Dict]:
+        """获取方法信息"""
+        conditions = []
+        params = []
+
+        if method_id:
+            conditions.append("method_id = ?")
+            params.append(method_id)
+
+        if method_name:
+            conditions.append("method_name LIKE ?")
+            params.append(f"%{method_name}%")
+
+        if gradient_mode:
+            conditions.append("gradient_elution_mode = ?")
+            params.append(gradient_mode)
+
+        where_condition = " AND ".join(conditions) if conditions else None
+
+        return self.query_data(
+            self.TABLES['methods'],
+            where_condition=where_condition,
+            where_params=tuple(params),
+            order_by="method_id ASC"
+        )
+
+    def get_method_with_column_info(self, method_id: Optional[int] = None) -> List[Dict]:
+        """获取方法信息和关联的柱子信息"""
+        sql = '''
+            SELECT m.method_id, m.method_name, m.flow_rate_ml_min, m.run_time_min,
+                   m.detector_wavelength, m.peak_driven, m.gradient_elution_mode,
+                   m.gradient_time_table, m.auto_gradient_params,
+                   c.column_code, c.specification_g, c.max_pressure_bar,
+                   c.flow_rate_ml_min as column_flow_rate, c.column_volume_cv_ml,
+                   c.sample_load_amount
+            FROM methods m
+            LEFT JOIN column_info c ON m.column_id = c.column_id
+        '''
+
+        params = ()
+        if method_id:
+            sql += " WHERE m.method_id = ?"
+            params = (method_id,)
+
+        sql += " ORDER BY m.method_id ASC"
+
+        return self.execute_custom_query(sql, params)
+
+    def add_method(self, method_name: str, column_id: int, flow_rate_ml_min: int,
+                  run_time_min: int, detector_wavelength: str, peak_driven: bool = False,
+                  gradient_elution_mode: str = 'manual', gradient_time_table: Optional[str] = None,
+                  auto_gradient_params: Optional[str] = None) -> bool:
+        """添加方法记录"""
+        data = {
+            'method_name': method_name,
+            'column_id': column_id,
+            'flow_rate_ml_min': flow_rate_ml_min,
+            'run_time_min': run_time_min,
+            'detector_wavelength': detector_wavelength,
+            'peak_driven': 1 if peak_driven else 0,
+            'gradient_elution_mode': gradient_elution_mode,
+            'gradient_time_table': gradient_time_table,
+            'auto_gradient_params': auto_gradient_params
+        }
+
+        return self.insert_data(self.TABLES['methods'], data)
+
+    def update_method(self, method_id: int, **kwargs) -> bool:
+        """更新方法记录"""
+        if 'updated_at' not in kwargs:
+            kwargs['updated_at'] = datetime.now().isoformat()
+
+        affected = self.update_data(
+            self.TABLES['methods'],
+            kwargs,
+            "method_id = ?",
+            (method_id,)
+        )
+        return affected > 0
+
+    def delete_method(self, method_id: int) -> bool:
+        """删除方法记录"""
+        affected = self.delete_data(
+            self.TABLES['methods'],
+            "method_id = ?",
+            (method_id,)
+        )
+        return affected > 0
 
     # ============= 数据库管理工具 =============
 

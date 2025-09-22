@@ -45,7 +45,7 @@ export function useRealtimeChart(currentValues) {
             if (point.uv254 !== undefined && point.uv254 !== null) uvValues.push(point.uv254);
             if (point.uv280 !== undefined && point.uv280 !== null) uvValues.push(point.uv280);
 
-            ['gradient-a', 'gradient-b', 'gradient-c', 'gradient-d'].forEach(key => {
+            ['gradient-a', 'gradient-b', 'gradient-c', 'gradient-d', 'flowRate'].forEach(key => {
                 if (point[key] !== undefined && point[key] !== null) {
                     gradientValues.push(point[key]);
                 }
@@ -138,6 +138,11 @@ export function useRealtimeChart(currentValues) {
             key: "gradient-d",
             label: "原液D (%)",
             visible: false,
+        },
+        {
+            key: "flowRate",
+            label: "流速 (mL/min)",
+            visible: true,
         },
     ]);
 
@@ -251,12 +256,13 @@ export function useRealtimeChart(currentValues) {
             .y((d) => yScaleLeft(d.uv280))
             .curve(d3.curveLinear);
 
-        // 为每个原液创建线条生成器
+        // 为每个原液和流速创建线条生成器
         const gradientKeys = [
             "gradient-a",
             "gradient-b",
             "gradient-c",
             "gradient-d",
+            "flowRate",
         ];
         gradientKeys.forEach((key) => {
             gradientLines[key] = d3
@@ -280,12 +286,13 @@ export function useRealtimeChart(currentValues) {
             .attr("stroke", "#06b6d4")
             .attr("stroke-width", 2);
 
-        // 添加原液数据线条路径
+        // 添加原液和流速数据线条路径
         const gradientColors = {
             "gradient-a": "#f56c6c",
             "gradient-b": "#67c23a",
             "gradient-c": "#e6a23c",
             "gradient-d": "#909399",
+            "flowRate": "#8b5cf6",
         };
 
         gradientKeys.forEach((key) => {
@@ -293,7 +300,7 @@ export function useRealtimeChart(currentValues) {
                 .attr("class", `${key}-line`)
                 .attr("fill", "none")
                 .attr("stroke", gradientColors[key])
-                .attr("stroke-width", 1.5)
+                .attr("stroke-width", key === "flowRate" ? 2 : 1.5)
                 .attr("opacity", 0.8);
         });
 
@@ -410,16 +417,48 @@ export function useRealtimeChart(currentValues) {
     // 生成完整的原液数据
     const generateGradientData = () => {
         chartData = [];
+
+        // 样本数据：模拟梯度变化
+        const sampleGradientData = [
+            {"time": 0, "originalB": 90.0, "originalA": 10.0, "originalC": 0, "originalD": 0, "flowRate": 12.0},
+            {"time": 15, "originalB": 60.0, "originalA": 40.0, "originalC": 0, "originalD": 0, "flowRate": 12.0},
+            {"time": 25, "originalB": 90.0, "originalA": 10.0, "originalC": 0, "originalD": 0, "flowRate": 12.0}
+        ];
+
+        // 插值函数：用于在关键点之间计算中间值
+        const interpolate = (time, keyPoints, valueKey) => {
+            // 找到时间点前后的两个关键点
+            let before = keyPoints[0];
+            let after = keyPoints[keyPoints.length - 1];
+
+            for (let i = 0; i < keyPoints.length - 1; i++) {
+                if (time >= keyPoints[i].time && time <= keyPoints[i + 1].time) {
+                    before = keyPoints[i];
+                    after = keyPoints[i + 1];
+                    break;
+                }
+            }
+
+            // 线性插值
+            if (before.time === after.time) {
+                return before[valueKey];
+            }
+
+            const ratio = (time - before.time) / (after.time - before.time);
+            return before[valueKey] + ratio * (after[valueKey] - before[valueKey]);
+        };
+
         // 生成0-30分钟的原液数据点，每0.1分钟一个点
         for (let time = 0; time <= 30; time += 0.1) {
             chartData.push({
                 time: time,
                 uv254: 0.156, // 初始UV254nm值
                 uv280: 0.132, // 初始UV280nm值
-                "gradient-a": 80, // 原液A恒定80%
-                "gradient-b": 20, // 原液B恒定20%
-                "gradient-c": 0, // 原液C恒定0%
-                "gradient-d": 0, // 原液D恒定0%
+                "gradient-a": interpolate(time, sampleGradientData, 'originalA'), // 原液A
+                "gradient-b": interpolate(time, sampleGradientData, 'originalB'), // 原液B
+                "gradient-c": interpolate(time, sampleGradientData, 'originalC'), // 原液C
+                "gradient-d": interpolate(time, sampleGradientData, 'originalD'), // 原液D
+                "flowRate": interpolate(time, sampleGradientData, 'flowRate'), // 流速
             });
         }
 
@@ -439,6 +478,7 @@ export function useRealtimeChart(currentValues) {
             "gradient-b",
             "gradient-c",
             "gradient-d",
+            "flowRate",
         ];
 
         gradientKeys.forEach((key) => {
@@ -503,7 +543,11 @@ export function useRealtimeChart(currentValues) {
     };
 
     // 重新开始图表
-    const restartChart = () => {
+    const restartChart = async (wavelengthFetcher = null) => {
+        // 如果提供了波长获取函数，先调用获取波长
+        if (wavelengthFetcher) {
+            await wavelengthFetcher();
+        }
         startChart();
     };
 
@@ -590,7 +634,7 @@ export function useRealtimeChart(currentValues) {
                     .transition()
                     .duration(200)
                     .attr("opacity", series.visible ? 1 : 0);
-            } else if (seriesKey.startsWith("gradient-")) {
+            } else if (seriesKey.startsWith("gradient-") || seriesKey === "flowRate") {
                 svg.select(`.${seriesKey}-line`)
                     .transition()
                     .duration(200)

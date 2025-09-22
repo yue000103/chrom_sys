@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 
 # 引入现有的数据库连接
-from ...core.database import get_db, Database
+# from ...core.database import get_db, Database
 
 
 class DatabaseManager:
@@ -50,4 +50,4 @@ class DatabaseManager:
         pass
 
 
-__all__ = ['DatabaseManager', 'get_db', 'Database']
+__all__ = ['DatabaseManager']

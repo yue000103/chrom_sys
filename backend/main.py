@@ -17,11 +17,13 @@ import logging
 from core.mqtt_manager import MQTTManager
 from core.database import DatabaseManager
 from services.data_processor.host_devices_processor import HostDevicesProcessor
-from api import device_control,data_collection,system_management,chromatography,hardware_control
+from api import device_control,data_collection,system_management,chromatography,hardware_control,column_management,smiles_management,rack_info,tube_control,experiment_control,experiment_management,valve_path,method_control
 
 # 导入硬件设备控制器
 from hardware.host_devices.detector import DetectorController
 from hardware.host_devices.pressure_sensor import PressureSensor
+from hardware.host_devices.bubble_sensor import BubbleSensorHost
+from hardware.collect_devices.bubble_sensor_collect import BubbleSensorCollect
 
 logger = logging.getLogger(__name__)
 
@@ -59,8 +61,7 @@ async def lifespan(app: FastAPI):
         if hasattr(detector, 'connect'):
             await detector.connect()
         # 设置双通道波长
-        await detector.set_wavelength(254, 'A')
-        await detector.set_wavelength(280, 'B')
+        await detector.set_wavelength([120, 254])
         # 启动检测
         await detector.start_detection()
         print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 检测器: A通道={detector.wavelength_a}nm, B通道={detector.wavelength_b}nm")
@@ -68,11 +69,23 @@ async def lifespan(app: FastAPI):
         # 注册检测器到处理器
         host_processor.register_device("detector_1", detector)
 
-        # 初始化其他设备（可选）
+        # 初始化压力传感器
         pressure_sensor = PressureSensor(mock=True)
         if hasattr(pressure_sensor, 'connect'):
             await pressure_sensor.connect()
         host_processor.register_device("pressure_1", pressure_sensor)
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 压力传感器: 已注册，将由处理器每2秒发布数据到MQTT")
+
+        # 初始化主机模块气泡传感器
+        bubble_sensor_host = BubbleSensorHost(mock=True)
+        await bubble_sensor_host.initialize()
+        host_processor.register_device("bubble_host", bubble_sensor_host)
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 主机气泡传感器: 已注册，将由处理器每2秒发布数据到MQTT (气1-气4)")
+
+        # 初始化收集模块气泡传感器
+        bubble_sensor_collect = BubbleSensorCollect(mock=True)
+        host_processor.register_device("bubble_collect", bubble_sensor_collect)
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 收集气泡传感器: 已注册，将由处理器每2秒发布数据到MQTT (气5-气7)")
 
         print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 设备初始化完成")
 
@@ -132,6 +145,16 @@ app.include_router(data_collection.router, prefix="/api/data", tags=["数据采�
 app.include_router(system_management.router, prefix="/api/system", tags=["系统管理"])
 app.include_router(chromatography.router, prefix="/api/chromatography", tags=["色谱仪"])
 app.include_router(hardware_control.router, tags=["硬件控制"])  # 硬件控制路由已包含/api/hardware前缀
+app.include_router(column_management.router, prefix="/api/columns", tags=["色谱柱管理"])
+app.include_router(smiles_management.router, prefix="/api/smiles", tags=["SMILES分子管理"])
+
+# 新增API路由
+app.include_router(rack_info.router, prefix="/api/racks", tags=["试管架管理"])
+app.include_router(tube_control.router, prefix="/api/tubes", tags=["试管控制"])
+app.include_router(experiment_control.router, prefix="/api/experiments", tags=["实验控制"])
+app.include_router(experiment_management.router, prefix="/api/experiment-data", tags=["实验数据管理"])
+app.include_router(valve_path.router, prefix="/api/valve-paths", tags=["阀门路径管理"])
+app.include_router(method_control.router, prefix="/api/method-control", tags=["方法控制"])
 
 @app.get("/")
 async def root():

@@ -102,3 +102,10 @@ class PressureSensor:
     def is_mock_mode(self) -> bool:
         """检查是否为mock模式"""
         return self.mock
+
+    async def get_pressure(self) -> float:
+        """
+        获取当前压力值（兼容方法名）
+        :return: 压力值(MPa)
+        """
+        return await self.read_pressure()

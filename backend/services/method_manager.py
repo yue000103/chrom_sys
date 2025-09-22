@@ -16,6 +16,7 @@ from models.method_models import (
 )
 from core.database import DatabaseManager
 from core.mqtt_manager import MQTTManager
+from data.database_utils import ChromatographyDB
 
 logger = logging.getLogger(__name__)
 
@@ -23,51 +24,51 @@ logger = logging.getLogger(__name__)
 class MethodManager:
     """分析方法管理器"""
 
-    def __init__(self, db_manager: DatabaseManager, mqtt_manager: MQTTManager):
+    def __init__(self, db_manager: DatabaseManager = None, mqtt_manager: MQTTManager = None):
         self.db_manager = db_manager
         self.mqtt_manager = mqtt_manager
+        self.db = ChromatographyDB()  # 直接使用数据库工具类
         self.methods_cache: Dict[str, AnalysisMethod] = {}
 
-    async def create_method(self, method_data: Dict[str, Any], created_by: str) -> AnalysisMethod:
+    def create_method(self, method_data: Dict[str, Any]) -> bool:
         """创建新的分析方法"""
-        logger.info(f"创建新方法: {method_data.get('method_name')}")
+        try:
+            method_name = method_data.get('method_name')
+            logger.info(f"创建新方法: {method_name}")
 
-        # 创建方法对象
-        method = AnalysisMethod(
-            created_by=created_by,
-            **method_data
-        )
+            # 使用数据库工具类的add_method方法
+            success = self.db.add_method(
+                method_name=method_data.get('method_name'),
+                column_id=method_data.get('column_id'),
+                flow_rate_ml_min=method_data.get('flow_rate_ml_min'),
+                run_time_min=method_data.get('run_time_min'),
+                detector_wavelength=method_data.get('detector_wavelength'),
+                peak_driven=method_data.get('peak_driven', False),
+                gradient_elution_mode=method_data.get('gradient_elution_mode', 'manual'),
+                gradient_time_table=method_data.get('gradient_time_table'),
+                auto_gradient_params=method_data.get('auto_gradient_params')
+            )
 
-        # 验证方法
-        validation_result = await self.validate_method(method)
-        if not validation_result["valid"]:
-            raise ValueError(f"方法验证失败: {validation_result['errors']}")
+            if success:
+                logger.info(f"方法创建成功: {method_name}")
 
-        # 保存到数据库 (这里需要实现数据库保存逻辑)
-        # 目前先保存到缓存
-        self.methods_cache[method.method_id] = method
+                # 发布MQTT消息 (如果MQTT管理器可用)
+                # if self.mqtt_manager:
+                #     await self.mqtt_manager.publish_data(
+                #         "methods/created",
+                #         {
+                #             "method_name": method_name,
+                #             "timestamp": datetime.now().isoformat()
+                #         }
+                #     )
+            else:
+                logger.error(f"方法创建失败: {method_name}")
 
-        # 记录历史
-        await self._log_method_history(
-            method.method_id,
-            "created",
-            "创建新方法",
-            created_by
-        )
+            return success
 
-        # 发布MQTT消息
-        await self.mqtt_manager.publish_data(
-            "methods/created",
-            {
-                "method_id": method.method_id,
-                "method_name": method.method_name,
-                "created_by": created_by,
-                "timestamp": datetime.now().isoformat()
-            }
-        )
-
-        logger.info(f"方法创建成功: {method.method_id}")
-        return method
+        except Exception as e:
+            logger.error(f"创建方法时出错: {e}")
+            return False
 
     async def update_method(self, method_id: str, updates: Dict[str, Any], modified_by: str) -> AnalysisMethod:
         """更新分析方法"""
@@ -129,76 +130,108 @@ class MethodManager:
         logger.info(f"方法更新成功: {method_id}")
         return method
 
-    async def get_method(self, method_id: str) -> Optional[AnalysisMethod]:
+    def get_method(self, method_id: int) -> Optional[Dict[str, Any]]:
         """获取单个方法"""
-        # 先从缓存获取
-        if method_id in self.methods_cache:
-            return self.methods_cache[method_id]
+        try:
+            methods = self.db.get_methods(method_id=method_id)
+            return methods[0] if methods else None
+        except Exception as e:
+            logger.error(f"获取方法失败: {e}")
+            return None
 
-        # 从数据库获取 (这里需要实现数据库查询逻辑)
-        # 目前返回None
-        return None
-
-    async def list_methods(
+    def list_methods(
         self,
-        method_type: Optional[MethodType] = None,
-        status: Optional[MethodStatus] = None,
-        created_by: Optional[str] = None,
+        method_name: Optional[str] = None,
+        gradient_mode: Optional[str] = None,
         limit: int = 50,
         offset: int = 0
-    ) -> List[AnalysisMethod]:
+    ) -> List[Dict[str, Any]]:
         """列出方法"""
-        logger.info(f"查询方法列表: type={method_type}, status={status}")
+        try:
+            logger.info(f"查询方法列表: name={method_name}, gradient_mode={gradient_mode}")
 
-        # 从缓存获取 (实际应从数据库查询)
-        methods = list(self.methods_cache.values())
+            # 从数据库获取方法列表
+            methods = self.db.get_methods(
+                method_name=method_name,
+                gradient_mode=gradient_mode
+            )
 
-        # 应用过滤器
-        if method_type:
-            methods = [m for m in methods if m.method_type == method_type]
-        if status:
-            methods = [m for m in methods if m.method_status == status]
-        if created_by:
-            methods = [m for m in methods if m.created_by == created_by]
+            # 应用分页
+            start = offset
+            end = offset + limit
+            return methods[start:end]
 
-        # 应用分页
-        return methods[offset:offset + limit]
+        except Exception as e:
+            logger.error(f"获取方法列表失败: {e}")
+            return []
 
-    async def delete_method(self, method_id: str, deleted_by: str) -> bool:
+    def delete_method(self, method_id: int) -> bool:
         """删除方法"""
-        logger.info(f"删除方法: {method_id}")
+        try:
+            logger.info(f"删除方法: {method_id}")
 
-        method = await self.get_method(method_id)
-        if not method:
-            raise ValueError(f"方法不存在: {method_id}")
+            # 检查方法是否存在
+            method = self.get_method(method_id)
+            if not method:
+                raise ValueError(f"方法不存在: {method_id}")
 
-        # 检查是否可以删除
-        if method.usage_count > 0:
-            raise ValueError("已使用的方法不能删除，只能归档")
+            # 从数据库删除
+            success = self.db.delete_method(method_id)
 
-        # 从缓存移除
-        self.methods_cache.pop(method_id, None)
+            if success:
+                logger.info(f"方法删除成功: {method_id}")
 
-        # 记录历史
-        await self._log_method_history(
-            method_id,
-            "deleted",
-            "方法已删除",
-            deleted_by
-        )
+                # 发布MQTT消息 (如果MQTT管理器可用)
+                # if self.mqtt_manager:
+                #     await self.mqtt_manager.publish_data(
+                #         "methods/deleted",
+                #         {
+                #             "method_id": method_id,
+                #             "timestamp": datetime.now().isoformat()
+                #         }
+                #     )
+            else:
+                logger.error(f"方法删除失败: {method_id}")
 
-        # 发布MQTT消息
-        await self.mqtt_manager.publish_data(
-            "methods/deleted",
-            {
-                "method_id": method_id,
-                "deleted_by": deleted_by,
-                "timestamp": datetime.now().isoformat()
-            }
-        )
+            return success
 
-        logger.info(f"方法删除成功: {method_id}")
-        return True
+        except Exception as e:
+            logger.error(f"删除方法时出错: {e}")
+            return False
+
+    def update_method(self, method_id: int, updates: Dict[str, Any]) -> bool:
+        """更新方法"""
+        try:
+            logger.info(f"更新方法: {method_id}")
+
+            # 检查方法是否存在
+            method = self.get_method(method_id)
+            if not method:
+                raise ValueError(f"方法不存在: {method_id}")
+
+            # 更新方法
+            success = self.db.update_method(method_id, **updates)
+
+            if success:
+                logger.info(f"方法更新成功: {method_id}")
+
+                # 发布MQTT消息 (如果MQTT管理器可用)
+                # if self.mqtt_manager:
+                #     await self.mqtt_manager.publish_data(
+                #         "methods/updated",
+                #         {
+                #             "method_id": method_id,
+                #             "timestamp": datetime.now().isoformat()
+                #         }
+                #     )
+            else:
+                logger.error(f"方法更新失败: {method_id}")
+
+            return success
+
+        except Exception as e:
+            logger.error(f"更新方法时出错: {e}")
+            return False
 
     async def archive_method(self, method_id: str, archived_by: str) -> bool:
         """归档方法"""

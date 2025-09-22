@@ -4,7 +4,10 @@
       "Bash(npm run dev:*)",
       "Read(//d/back/chromatography_system/backend/api/function_control/**)",
       "Read(//d/back/chromatography_system/backend/**)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(sqlite3:*)",
+      "Bash(curl:*)",
+      "Bash(npm run build:*)"
     ],
     "deny": [],
     "ask": []

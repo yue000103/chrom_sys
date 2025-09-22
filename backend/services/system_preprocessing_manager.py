@@ -9,15 +9,20 @@ from datetime import datetime
 from typing import List, Dict, Any, Optional
 from core.mqtt_manager import MQTTManager
 from core.database import DatabaseManager
-from models.system_preprocessing_models import (
-    SystemCheckConfig,
-    SystemCheckResult,
-    PreprocessingSequence,
-    PreprocessingStep,
-    CalibrationResult,
-    SystemReadinessResult
-)
+# from models.system_preprocessing_models import (
+#     SystemCheckConfig,
+#     SystemCheckResult,
+#     PreprocessingSequence,
+#     PreprocessingStep,
+#     CalibrationResult,
+#     SystemReadinessResult
+# )
 from models.base_models import DeviceStatus
+from hardware.host_devices.detector import DetectorController
+from hardware.host_devices.pump_controller import PumpController
+from hardware.host_devices.bubble_sensor import BubbleSensorHost
+from hardware.host_devices.relay_controller import RelayController
+from hardware.collect_devices.multi_valve import MultiValveController
 
 logger = logging.getLogger(__name__)
 
@@ -28,538 +33,698 @@ class SystemPreprocessingManager:
     def __init__(self, mqtt_manager: MQTTManager, db_manager: DatabaseManager):
         self.mqtt_manager = mqtt_manager
         self.db_manager = db_manager
-        self.current_sequence: Optional[PreprocessingSequence] = None
         self.system_ready = False
         self.last_check_time: Optional[datetime] = None
 
-    async def perform_system_check(self, config: SystemCheckConfig) -> SystemCheckResult:
-        """执行系统检查"""
-        logger.info("开始执行系统检查...")
-        start_time = datetime.now()
+        # 初始化硬件设备控制器
+        self.detector = DetectorController(mock=True)
+        self.pump_controller = PumpController(mock=True)
+        self.bubble_sensor = BubbleSensorHost(mock=True)
+        self.relay_controller = RelayController(mock=True)
+        self.multi_valve = MultiValveController(mock=True)
+        self.current_experiment_id: Optional[int] = None
 
-        check_results = []
-        failed_checks = []
 
-        try:
-            # 1. 设备连接检查
-            if config.check_device_connections:
-                device_result = await self._check_device_connections()
-                check_results.append(device_result)
-                if not device_result["success"]:
-                    failed_checks.append("device_connections")
 
-            # 2. 压力系统检查
-            if config.check_pressure_system:
-                pressure_result = await self._check_pressure_system()
-                check_results.append(pressure_result)
-                if not pressure_result["success"]:
-                    failed_checks.append("pressure_system")
-
-            # 3. 检测器检查
-            if config.check_detector:
-                detector_result = await self._check_detector_system()
-                check_results.append(detector_result)
-                if not detector_result["success"]:
-                    failed_checks.append("detector_system")
-
-            # 4. 泵系统检查
-            if config.check_pump_system:
-                pump_result = await self._check_pump_system()
-                check_results.append(pump_result)
-                if not pump_result["success"]:
-                    failed_checks.append("pump_system")
-
-            # 5. 试管架检查
-            if config.check_tube_racks:
-                rack_result = await self._check_tube_racks()
-                check_results.append(rack_result)
-                if not rack_result["success"]:
-                    failed_checks.append("tube_racks")
-
-            # 6. 温度系统检查
-            if config.check_temperature:
-                temp_result = await self._check_temperature_system()
-                check_results.append(temp_result)
-                if not temp_result["success"]:
-                    failed_checks.append("temperature_system")
-
-            end_time = datetime.now()
-            check_duration = (end_time - start_time).total_seconds()
-
-            # 创建检查结果
-            result = SystemCheckResult(
-                check_id=f"check_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-                start_time=start_time,
-                end_time=end_time,
-                check_duration_seconds=check_duration,
-                total_checks=len(check_results),
-                passed_checks=len([r for r in check_results if r["success"]]),
-                failed_checks=failed_checks,
-                check_details=check_results,
-                overall_success=len(failed_checks) == 0,
-                system_ready_for_experiment=len(failed_checks) == 0
-            )
-
-            self.system_ready = result.system_ready_for_experiment
-            self.last_check_time = end_time
-
-            # 记录检查结果
-            await self._log_system_check_event(result)
-
-            # 发布MQTT消息
-            await self.mqtt_manager.publish_data(
-                "system/check_completed",
-                {
-                    "check_id": result.check_id,
-                    "success": result.overall_success,
-                    "failed_checks": failed_checks,
-                    "duration": check_duration,
-                    "timestamp": datetime.now().isoformat()
-                }
-            )
-
-            logger.info(f"系统检查完成: {result.overall_success}, 耗时: {check_duration:.2f}秒")
-            return result
-
-        except Exception as e:
-            logger.error(f"系统检查过程中发生异常: {e}")
-            end_time = datetime.now()
-            return SystemCheckResult(
-                check_id=f"check_error_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-                start_time=start_time,
-                end_time=end_time,
-                check_duration_seconds=(end_time - start_time).total_seconds(),
-                total_checks=0,
-                passed_checks=0,
-                failed_checks=["system_error"],
-                check_details=[{"name": "system_error", "success": False, "error": str(e)}],
-                overall_success=False,
-                system_ready_for_experiment=False
-            )
-
-    async def calibrate_system(self, calibration_config: Dict[str, Any]) -> CalibrationResult:
-        """系统校准"""
-        logger.info("开始系统校准...")
-        start_time = datetime.now()
-
-        calibration_steps = []
-        failed_calibrations = []
+    async def initialize_devices(self, wavelength: float = None, flow_rates: Dict[str, float] = None, gradient_profile: Dict[str, Any] = None) -> bool:
+        """
+        初始化设备
+        如果提供了参数，使用提供的参数；否则根据current_experiment_id从数据库获取方法参数
+        :param wavelength: 检测器波长（可选，如果不提供则从method获取）
+        :param flow_rates: 四元泵流速设置 {'A': 1.0, 'B': 0.5, 'C': 0.0, 'D': 0.0}（可选）
+        :param gradient_profile: 梯度洗脱参数（可选）
+        :return: 初始化结果，任何一个步骤失败都返回False
+        """
+        logger.info("开始设备初始化...")
 
         try:
-            # 1. 检测器校准
-            if calibration_config.get("calibrate_detector", True):
-                detector_cal = await self._calibrate_detector()
-                calibration_steps.append(detector_cal)
-                if not detector_cal["success"]:
-                    failed_calibrations.append("detector")
+            # 如果没有提供参数且有current_experiment_id，则从数据库获取方法参数
+            if (wavelength is None or flow_rates is None or gradient_profile is None) and self.current_experiment_id:
+                method_params = await self._get_method_parameters_from_experiment(self.current_experiment_id)
+                if method_params:
+                    if wavelength is None:
+                        wavelength = method_params.get('wavelength', 254.0)
+                    if flow_rates is None:
+                        flow_rates = method_params.get('flow_rates')
 
-            # 2. 泵流量校准
-            if calibration_config.get("calibrate_pump", True):
-                pump_cal = await self._calibrate_pump_flow()
-                calibration_steps.append(pump_cal)
-                if not pump_cal["success"]:
-                    failed_calibrations.append("pump_flow")
-
-            # 3. 压力传感器校准
-            if calibration_config.get("calibrate_pressure", True):
-                pressure_cal = await self._calibrate_pressure_sensors()
-                calibration_steps.append(pressure_cal)
-                if not pressure_cal["success"]:
-                    failed_calibrations.append("pressure_sensors")
-
-            # 4. 温度校准
-            if calibration_config.get("calibrate_temperature", True):
-                temp_cal = await self._calibrate_temperature()
-                calibration_steps.append(temp_cal)
-                if not temp_cal["success"]:
-                    failed_calibrations.append("temperature")
-
-            end_time = datetime.now()
-            calibration_duration = (end_time - start_time).total_seconds()
-
-            result = CalibrationResult(
-                calibration_id=f"cal_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-                start_time=start_time,
-                end_time=end_time,
-                calibration_duration_seconds=calibration_duration,
-                calibrated_components=len([s for s in calibration_steps if s["success"]]),
-                failed_components=failed_calibrations,
-                calibration_details=calibration_steps,
-                overall_success=len(failed_calibrations) == 0,
-                drift_compensation_applied=True,
-                next_calibration_due=datetime.now()
-            )
-
-            # 记录校准结果
-            await self._log_calibration_event(result)
-
-            logger.info(f"系统校准完成: {result.overall_success}")
-            return result
-
-        except Exception as e:
-            logger.error(f"系统校准过程中发生异常: {e}")
-            end_time = datetime.now()
-            return CalibrationResult(
-                calibration_id=f"cal_error_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-                start_time=start_time,
-                end_time=end_time,
-                calibration_duration_seconds=(end_time - start_time).total_seconds(),
-                calibrated_components=0,
-                failed_components=["system_error"],
-                calibration_details=[{"component": "system", "success": False, "error": str(e)}],
-                overall_success=False,
-                drift_compensation_applied=False,
-                next_calibration_due=datetime.now()
-            )
-
-    async def execute_preprocessing_sequence(self, sequence: PreprocessingSequence) -> Dict[str, Any]:
-        """执行预处理序列"""
-        logger.info(f"执行预处理序列: {sequence.sequence_name}")
-        self.current_sequence = sequence
-
-        start_time = datetime.now()
-        completed_steps = 0
-        failed_steps = []
-
-        try:
-            for i, step in enumerate(sequence.steps):
-                logger.info(f"执行步骤 {i+1}/{len(sequence.steps)}: {step.step_name}")
-
-                step_result = await self._execute_preprocessing_step(step)
-
-                if step_result["success"]:
-                    completed_steps += 1
-                    logger.info(f"步骤完成: {step.step_name}")
+                    logger.info(f"从实验ID {self.current_experiment_id} 获取方法参数")
                 else:
-                    failed_steps.append(step.step_name)
-                    logger.error(f"步骤失败: {step.step_name} - {step_result.get('error', '')}")
+                    logger.warning(f"无法获取实验ID {self.current_experiment_id} 的方法参数，使用默认值")
 
-                    if sequence.stop_on_error:
-                        break
+            # 设置默认值
+            if wavelength is None:
+                wavelength = 254.0
+            if flow_rates is None:
+                flow_rates = {'A': 1.0, 'B': 0.0, 'C': 0.0, 'D': 0.0}
 
-                # 发布进度
+            # 1. 连接所有设备
+            devices_connected = await self._connect_all_devices()
+            if not devices_connected:
+                return False
+
+            # 2. 设置检测器波长
+            wavelength_set = await self.detector.set_wavelength(wavelength)
+            if not wavelength_set:
+                logger.error(f"设置检测器波长失败: {wavelength}nm")
+                return False
+            logger.info(f"检测器波长设置成功: {wavelength}nm")
+
+            # 3. 设置四元泵流速
+            for pump_id, flow_rate in flow_rates.items():
+                flow_rate_set = await self.pump_controller.set_flow_rate(pump_id, flow_rate)
+                if not flow_rate_set:
+                    logger.error(f"设置泵{pump_id}流速失败: {flow_rate} mL/min")
+                    return False
+                logger.info(f"泵{pump_id}流速设置成功: {flow_rate} mL/min")
+
+
+            # 5. 检测气泡传感器状态
+            # 读取所有气泡传感器，如果气1-气4均为True（检测到气泡），则返回False
+            all_sensors = await self.bubble_sensor.read_all_sensors()
+            bubble_detected_sensors = []
+
+            for sensor_id in ['气1', '气2', '气3', '气4']:
+                if sensor_id in all_sensors:
+                    sensor_data = all_sensors[sensor_id]
+                    if sensor_data.get('bubble_detected', False):
+                        bubble_detected_sensors.append(sensor_id)
+
+            # 如果所有传感器都检测到气泡，返回False
+            if len(bubble_detected_sensors) == 4:
+                logger.error("所有气泡传感器都检测到气泡，初始化失败")
+                return False
+
+            if bubble_detected_sensors:
+                logger.warning(f"以下传感器检测到气泡: {', '.join(bubble_detected_sensors)}")
+            else:
+                logger.info("气泡传感器检查通过")
+
+            logger.info("设备初始化完成")
+            return True
+
+        except Exception as e:
+            logger.error(f"设备初始化过程中发生异常: {e}")
+            return False
+
+    async def _connect_all_devices(self) -> bool:
+        """
+        连接所有设备
+        :return: 连接结果，任何一个设备连接失败都返回False
+        """
+        try:
+            # 连接检测器
+            detector_connected = await self.detector.connect()
+            if not detector_connected:
+                logger.error("检测器连接失败")
+                return False
+            logger.info("检测器连接成功")
+
+            # 连接泵控制器
+            pump_connected = await self.pump_controller.connect()
+            if not pump_connected:
+                logger.error("泵控制器连接失败")
+                return False
+            logger.info("泵控制器连接成功")
+
+            # 初始化气泡传感器
+            bubble_initialized = await self.bubble_sensor.initialize()
+            if not bubble_initialized:
+                logger.error("气泡传感器初始化失败")
+                return False
+            logger.info("气泡传感器初始化成功")
+
+            logger.info("所有设备连接完成")
+            return True
+
+        except Exception as e:
+            logger.error(f"设备连接过程中发生异常: {e}")
+            return False
+
+    async def _get_method_parameters_from_experiment(self, experiment_id: int) -> Optional[Dict[str, Any]]:
+        """
+        根据实验ID获取方法参数
+        :param experiment_id: 实验ID
+        :return: 方法参数字典
+        """
+        try:
+            # 查询实验获取method_id
+            experiment_query = """
+                SELECT method_id FROM experiments WHERE id = ?
+            """
+            experiment_result = await self.db_manager.fetch_one(experiment_query, (experiment_id,))
+
+            if not experiment_result:
+                logger.error(f"未找到实验ID: {experiment_id}")
+                return None
+
+            method_id = experiment_result['method_id']
+            logger.info(f"实验ID {experiment_id} 对应方法ID: {method_id}")
+
+            # 查询方法获取参数
+            method_query = """
+                SELECT detection_parameters, gradient_program, initial_flow_rates
+                FROM methods WHERE method_id = ?
+            """
+            method_result = await self.db_manager.fetch_one(method_query, (method_id,))
+
+            if not method_result:
+                logger.error(f"未找到方法ID: {method_id}")
+                return None
+
+            # 解析检测参数获取波长
+            detection_params = method_result.get('detection_parameters', {})
+            if isinstance(detection_params, str):
+                import json
+                detection_params = json.loads(detection_params)
+
+            wavelength = detection_params.get('wavelength_nm', 254.0)
+
+            # 解析梯度程序
+            gradient_program = method_result.get('gradient_program', {})
+            if isinstance(gradient_program, str):
+                import json
+                gradient_program = json.loads(gradient_program)
+
+            # 解析初始流速
+            flow_rates = method_result.get('initial_flow_rates', {})
+            if isinstance(flow_rates, str):
+                import json
+                flow_rates = json.loads(flow_rates)
+
+            # 如果没有初始流速，从梯度程序的第一步获取
+            if not flow_rates and gradient_program:
+                steps = gradient_program.get('steps', [])
+                if steps and len(steps) > 0:
+                    first_step = steps[0]
+                    flow_rates = {
+                        'A': first_step.get('flow_a_ml_min', 1.0),
+                        'B': first_step.get('flow_b_ml_min', 0.0),
+                        'C': first_step.get('flow_c_ml_min', 0.0),
+                        'D': first_step.get('flow_d_ml_min', 0.0)
+                    }
+
+            return {
+                'wavelength': wavelength,
+                'flow_rates': flow_rates,
+                'gradient_profile': gradient_program
+            }
+
+        except Exception as e:
+            logger.error(f"获取方法参数失败: {e}")
+            return None
+
+    async def _get_experiment_column_balance_params(self, experiment_id: int) -> Optional[Dict[str, Any]]:
+        """
+        获取实验的柱平衡参数
+        :param experiment_id: 实验ID
+        :return: 柱平衡参数字典
+        """
+        try:
+            experiment_query = """
+                SELECT column_balance, column_balance_time_min, column_conditioning_solution
+                FROM experiments WHERE id = ?
+            """
+            result = await self.db_manager.fetch_one(experiment_query, (experiment_id,))
+
+            if not result:
+                logger.error(f"未找到实验ID: {experiment_id}")
+                return None
+
+            return {
+                'column_balance': result.get('column_balance', False),
+                'column_balance_time_min': result.get('column_balance_time_min', 0),
+                'column_conditioning_solution': result.get('column_conditioning_solution')
+            }
+
+        except Exception as e:
+            logger.error(f"获取实验柱平衡参数失败: {e}")
+            return None
+
+    async def _get_experiment_purge_params(self, experiment_id: int) -> Optional[Dict[str, Any]]:
+        """
+        获取实验的吹扫系统参数
+        :param experiment_id: 实验ID
+        :return: 吹扫参数字典
+        """
+        try:
+            experiment_query = """
+                SELECT purge_system
+                FROM experiments WHERE id = ?
+            """
+            result = await self.db_manager.fetch_one(experiment_query, (experiment_id,))
+
+            if not result:
+                logger.error(f"未找到实验ID: {experiment_id}")
+                return None
+
+            return {
+                'purge_system': result.get('purge_system', False)
+            }
+
+        except Exception as e:
+            logger.error(f"获取实验吹扫参数失败: {e}")
+            return None
+
+    async def _get_experiment_purge_column_params(self, experiment_id: int) -> Optional[Dict[str, Any]]:
+        """
+        获取实验的吹扫柱子参数
+        :param experiment_id: 实验ID
+        :return: 吹扫柱子参数字典
+        """
+        try:
+            experiment_query = """
+                SELECT purge_column, purge_column_time_min
+                FROM experiments WHERE id = ?
+            """
+            result = await self.db_manager.fetch_one(experiment_query, (experiment_id,))
+
+            if not result:
+                logger.error(f"未找到实验ID: {experiment_id}")
+                return None
+
+            return {
+                'purge_column': result.get('purge_column', False),
+                'purge_column_time_min': result.get('purge_column_time_min', 0)
+            }
+
+        except Exception as e:
+            logger.error(f"获取实验吹扫柱子参数失败: {e}")
+            return None
+
+    async def _equilibrate_column(self, parameters: Dict[str, Any]):
+        """
+        平衡色谱柱
+        根据experiment中的column_balance参数执行柱平衡操作
+        :param parameters: 可能包含实验ID或直接的平衡参数
+        """
+        logger.info("开始柱平衡操作...")
+
+        try:
+            # 获取柱平衡参数
+            balance_params = None
+
+            # 如果有current_experiment_id，从数据库获取参数
+            if self.current_experiment_id:
+                balance_params = await self._get_experiment_column_balance_params(self.current_experiment_id)
+
+            # 如果parameters中直接提供了参数，优先使用
+            if parameters:
+                balance_params = {
+                    'column_balance': parameters.get('column_balance', balance_params.get('column_balance', False) if balance_params else False),
+                    'column_balance_time_min': parameters.get('column_balance_time_min', balance_params.get('column_balance_time_min', 0) if balance_params else 0),
+                    'column_conditioning_solution': parameters.get('column_conditioning_solution', balance_params.get('column_conditioning_solution') if balance_params else None)
+                }
+
+            if not balance_params:
+                logger.warning("未获取到柱平衡参数，跳过柱平衡")
+                return
+
+            # 检查是否需要执行柱平衡
+            if not balance_params.get('column_balance', False):
+                logger.info("实验设置不需要柱平衡，跳过")
+                return
+
+            balance_time_min = balance_params.get('column_balance_time_min', 0)
+            conditioning_solution = balance_params.get('column_conditioning_solution')
+
+            if balance_time_min <= 0:
+                logger.warning("柱平衡时间为0或未设置，跳过柱平衡")
+                return
+
+            logger.info(f"开始柱平衡: 时间={balance_time_min}分钟, 润柱溶液={conditioning_solution}")
+
+            # 发布开始消息
+            if self.mqtt_manager:
                 await self.mqtt_manager.publish_data(
-                    "system/preprocessing_progress",
+                    "system/preprocessing_status",
                     {
-                        "sequence_id": sequence.sequence_id,
-                        "current_step": i + 1,
-                        "total_steps": len(sequence.steps),
-                        "step_name": step.step_name,
-                        "progress_percent": ((i + 1) / len(sequence.steps)) * 100,
+                        "action": "column_equilibration",
+                        "experiment_id": self.current_experiment_id,
+                        "time": balance_time_min,
+                        "status": "started",
                         "timestamp": datetime.now().isoformat()
                     }
                 )
 
-            end_time = datetime.now()
-            total_duration = (end_time - start_time).total_seconds()
-
-            result = {
-                "sequence_id": sequence.sequence_id,
-                "success": len(failed_steps) == 0,
-                "completed_steps": completed_steps,
-                "failed_steps": failed_steps,
-                "total_duration_seconds": total_duration,
-                "start_time": start_time,
-                "end_time": end_time
+            # 1. 设置柱平衡的梯度洗脱程序
+            # 通常柱平衡使用单一溶剂系统
+            equilibration_gradient = {
+                "steps": [
+                    {
+                        "time_min": balance_time_min,
+                        "flow_a_ml_min": 1.0,  # 主要溶剂
+                        "flow_b_ml_min": 0.0,
+                        "flow_c_ml_min": 0.0,
+                        "flow_d_ml_min": 0.0
+                    }
+                ],
+                "total_duration": balance_time_min
             }
+
+            # 如果指定了润柱溶液，调整流速配置
+            if conditioning_solution:
+                if conditioning_solution == 1:  # 假设1代表溶剂A
+                    equilibration_gradient["steps"][0]["flow_a_ml_min"] = 1.0
+                elif conditioning_solution == 2:  # 假设2代表溶剂B
+                    equilibration_gradient["steps"][0]["flow_a_ml_min"] = 0.0
+                    equilibration_gradient["steps"][0]["flow_b_ml_min"] = 1.0
+                # 可以根据需要添加更多溶剂选项
+
+            # 2. 设置梯度洗脱
+            gradient_set = await self.pump_controller.set_gradient(equilibration_gradient)
+            if not gradient_set:
+                logger.error("设置柱平衡梯度失败")
+                return
+
+            # 3. 启动泵系统
+            pumps_to_start = ['A']  # 默认启动A泵
+            if conditioning_solution == 2:
+                pumps_to_start = ['B']
+            elif conditioning_solution == 3:
+                pumps_to_start = ['C']
+            elif conditioning_solution == 4:
+                pumps_to_start = ['D']
+
+            for pump_id in pumps_to_start:
+                pump_started = await self.pump_controller.start_pump(pump_id)
+                if not pump_started:
+                    logger.error(f"启动泵{pump_id}失败")
+                    return
+                logger.info(f"泵{pump_id}启动成功")
+
+            # 4. 开始计时等待
+            logger.info(f"柱平衡进行中，等待 {balance_time_min} 分钟...")
+
+            # 等待指定的平衡时间
+            await asyncio.sleep(balance_time_min * 60)  # 转换为秒
+
+            # 5. 停止泵
+            for pump_id in pumps_to_start:
+                pump_stopped = await self.pump_controller.stop_pump(pump_id)
+                if not pump_stopped:
+                    logger.warning(f"停止泵{pump_id}失败")
+                else:
+                    logger.info(f"泵{pump_id}停止成功")
+
+            logger.info("柱平衡完成")
 
             # 发布完成消息
-            await self.mqtt_manager.publish_data(
-                "system/preprocessing_completed",
-                {
-                    **result,
-                    "start_time": start_time.isoformat(),
-                    "end_time": end_time.isoformat(),
-                    "timestamp": datetime.now().isoformat()
+            if self.mqtt_manager:
+                await self.mqtt_manager.publish_data(
+                    "system/preprocessing_status",
+                    {
+                        "action": "column_equilibration",
+                        "experiment_id": self.current_experiment_id,
+                        "time": balance_time_min,
+                        "status": "completed",
+                        "timestamp": datetime.now().isoformat()
+                    }
+                )
+
+        except Exception as e:
+            logger.error(f"柱平衡过程中发生异常: {e}")
+            # 确保在异常情况下也停止泵
+            try:
+                for pump_id in ['A', 'B', 'C', 'D']:
+                    await self.pump_controller.stop_pump(pump_id)
+            except:
+                pass
+
+    async def _purge_system(self, parameters: Dict[str, Any]):
+        """
+        吹扫系统
+        根据experiment中的purge_system参数执行系统吹扫操作
+        :param parameters: 可能包含实验ID或直接的吹扫参数
+        """
+        logger.info("开始吹扫系统操作...")
+
+        try:
+            # 获取吹扫参数
+            purge_params = None
+
+            # 如果有current_experiment_id，从数据库获取参数
+            if self.current_experiment_id:
+                purge_params = await self._get_experiment_purge_params(self.current_experiment_id)
+
+            # 如果parameters中直接提供了参数，优先使用
+            if parameters:
+                purge_params = {
+                    'purge_system': parameters.get('purge_system', purge_params.get('purge_system', False) if purge_params else False)
                 }
-            )
 
-            logger.info(f"预处理序列完成: {result['success']}")
-            return result
+            if not purge_params:
+                logger.warning("未获取到吹扫参数，跳过吹扫系统")
+                return
+
+            # 检查是否需要执行吹扫
+            if not purge_params.get('purge_system', False):
+                logger.info("实验设置不需要吹扫系统，跳过")
+                return
+
+            logger.info("开始执行系统吹扫，等待50秒...")
+
+            # 发布开始消息
+            if self.mqtt_manager:
+                await self.mqtt_manager.publish_data(
+                    "system/preprocessing_status",
+                    {
+                        "action": "purge_system",
+                        "experiment_id": self.current_experiment_id,
+                        "status": "started",
+                        "timestamp": datetime.now().isoformat()
+                    }
+                )
+
+            # 等待50秒进行吹扫
+            await asyncio.sleep(50)
+
+            logger.info("吹扫系统完成")
+
+            # 发布完成消息
+            if self.mqtt_manager:
+                await self.mqtt_manager.publish_data(
+                    "system/preprocessing_status",
+                    {
+                        "action": "purge_system",
+                        "experiment_id": self.current_experiment_id,
+                        "status": "completed",
+                        "timestamp": datetime.now().isoformat()
+                    }
+                )
 
         except Exception as e:
-            logger.error(f"预处理序列执行异常: {e}")
-            return {
-                "sequence_id": sequence.sequence_id,
-                "success": False,
-                "error": str(e),
-                "completed_steps": completed_steps,
-                "failed_steps": failed_steps
-            }
-        finally:
-            self.current_sequence = None
+            logger.error(f"吹扫系统过程中发生异常: {e}")
 
-    async def get_system_readiness(self) -> SystemReadinessResult:
-        """获取系统就绪状态"""
-        device_statuses = await self._get_all_device_statuses()
+    async def _purge_column(self, parameters: Dict[str, Any]):
+        """
+        吹扫柱子
+        根据experiment中的purge_column参数执行柱子吹扫操作
+        :param parameters: 可能包含实验ID或直接的吹扫参数
+        """
+        logger.info("开始吹扫柱子操作...")
 
-        critical_devices_ready = all(
-            status["status"] == DeviceStatus.READY
-            for device_id, status in device_statuses.items()
-            if status.get("critical", False)
-        )
-
-        return SystemReadinessResult(
-            system_ready=self.system_ready and critical_devices_ready,
-            last_check_time=self.last_check_time,
-            critical_devices_ready=critical_devices_ready,
-            total_devices=len(device_statuses),
-            ready_devices=len([s for s in device_statuses.values() if s["status"] == DeviceStatus.READY]),
-            error_devices=len([s for s in device_statuses.values() if s["status"] == DeviceStatus.ERROR]),
-            calibration_required=False,  # 简化处理
-            maintenance_required=False   # 简化处理
-        )
-
-    # 私有方法 - 设备检查
-    async def _check_device_connections(self) -> Dict[str, Any]:
-        """检查设备连接"""
         try:
-            # 模拟设备连接检查
-            await asyncio.sleep(1)
-            return {
-                "name": "device_connections",
-                "success": True,
-                "details": "所有设备连接正常",
-                "checked_devices": 22
-            }
-        except Exception as e:
-            return {
-                "name": "device_connections",
-                "success": False,
-                "error": str(e)
-            }
+            # 获取吹扫柱子参数
+            purge_params = None
 
-    async def _check_pressure_system(self) -> Dict[str, Any]:
-        """检查压力系统"""
-        try:
-            await asyncio.sleep(0.5)
-            return {
-                "name": "pressure_system",
-                "success": True,
-                "details": "压力系统正常",
-                "pressure_range": "0-400 bar"
-            }
-        except Exception as e:
-            return {
-                "name": "pressure_system",
-                "success": False,
-                "error": str(e)
-            }
+            # 如果有current_experiment_id，从数据库获取参数
+            if self.current_experiment_id:
+                purge_params = await self._get_experiment_purge_column_params(self.current_experiment_id)
 
-    async def _check_detector_system(self) -> Dict[str, Any]:
-        """检查检测器系统"""
-        try:
-            await asyncio.sleep(0.5)
-            return {
-                "name": "detector_system",
-                "success": True,
-                "details": "检测器系统正常",
-                "wavelength_range": "190-800 nm"
-            }
-        except Exception as e:
-            return {
-                "name": "detector_system",
-                "success": False,
-                "error": str(e)
-            }
+            # 如果parameters中直接提供了参数，优先使用
+            if parameters:
+                purge_params = {
+                    'purge_column': parameters.get('purge_column', purge_params.get('purge_column', False) if purge_params else False),
+                    'purge_column_time_min': parameters.get('purge_column_time_min', purge_params.get('purge_column_time_min', 0) if purge_params else 0)
+                }
 
-    async def _check_pump_system(self) -> Dict[str, Any]:
-        """检查泵系统"""
-        try:
-            await asyncio.sleep(0.5)
-            return {
-                "name": "pump_system",
-                "success": True,
-                "details": "泵系统正常",
-                "flow_range": "0.1-10 mL/min"
-            }
-        except Exception as e:
-            return {
-                "name": "pump_system",
-                "success": False,
-                "error": str(e)
-            }
+            if not purge_params:
+                logger.warning("未获取到吹扫柱子参数，跳过吹扫柱子")
+                return
 
-    async def _check_tube_racks(self) -> Dict[str, Any]:
-        """检查试管架"""
-        try:
-            await asyncio.sleep(0.3)
-            return {
-                "name": "tube_racks",
-                "success": True,
-                "details": "试管架系统正常",
-                "available_positions": 96
-            }
-        except Exception as e:
-            return {
-                "name": "tube_racks",
-                "success": False,
-                "error": str(e)
-            }
+            # 检查是否需要执行吹扫柱子
+            if not purge_params.get('purge_column', False):
+                logger.info("实验设置不需要吹扫柱子，跳过")
+                return
 
-    async def _check_temperature_system(self) -> Dict[str, Any]:
-        """检查温度系统"""
-        try:
-            await asyncio.sleep(0.3)
-            return {
-                "name": "temperature_system",
-                "success": True,
-                "details": "温度控制系统正常",
-                "temperature_range": "4-80°C"
-            }
-        except Exception as e:
-            return {
-                "name": "temperature_system",
-                "success": False,
-                "error": str(e)
-            }
+            purge_time_min = purge_params.get('purge_column_time_min', 0)
+            if purge_time_min <= 0:
+                logger.warning("吹扫柱子时间为0或未设置，跳过吹扫柱子")
+                return
 
-    # 私有方法 - 校准
-    async def _calibrate_detector(self) -> Dict[str, Any]:
-        """校准检测器"""
-        try:
-            await asyncio.sleep(2)
-            return {
-                "component": "detector",
-                "success": True,
-                "calibration_factor": 1.002,
-                "drift_correction": 0.1
-            }
-        except Exception as e:
-            return {
-                "component": "detector",
-                "success": False,
-                "error": str(e)
-            }
+            logger.info(f"开始吹扫柱子: 时间={purge_time_min}分钟")
 
-    async def _calibrate_pump_flow(self) -> Dict[str, Any]:
-        """校准泵流量"""
-        try:
-            await asyncio.sleep(1.5)
-            return {
-                "component": "pump_flow",
-                "success": True,
-                "flow_correction_factor": 0.998,
-                "accuracy_percent": 99.8
-            }
-        except Exception as e:
-            return {
-                "component": "pump_flow",
-                "success": False,
-                "error": str(e)
-            }
+            # 发布开始消息
+            if self.mqtt_manager:
+                await self.mqtt_manager.publish_data(
+                    "system/preprocessing_status",
+                    {
+                        "action": "purge_column",
+                        "experiment_id": self.current_experiment_id,
+                        "time": purge_time_min,
+                        "status": "started",
+                        "timestamp": datetime.now().isoformat()
+                    }
+                )
 
-    async def _calibrate_pressure_sensors(self) -> Dict[str, Any]:
-        """校准压力传感器"""
-        try:
-            await asyncio.sleep(1)
-            return {
-                "component": "pressure_sensors",
-                "success": True,
-                "pressure_offset": 0.2,
-                "linearity_error": 0.05
-            }
-        except Exception as e:
-            return {
-                "component": "pressure_sensors",
-                "success": False,
-                "error": str(e)
-            }
+            # 1. 双1（高压电磁阀）开启
+            dual1_on = await self.relay_controller.control_relay('双1', 'on')
+            if not dual1_on:
+                logger.error("开启双1（高压电磁阀）失败")
+                return
+            logger.info("双1（高压电磁阀）开启成功")
 
-    async def _calibrate_temperature(self) -> Dict[str, Any]:
-        """校准温度"""
-        try:
-            await asyncio.sleep(1)
-            return {
-                "component": "temperature",
-                "success": True,
-                "temperature_offset": 0.1,
-                "stability": 0.05
-            }
-        except Exception as e:
-            return {
-                "component": "temperature",
-                "success": False,
-                "error": str(e)
-            }
+            # 2. 双2（低压电磁阀）关闭
+            dual2_off = await self.relay_controller.control_relay('双2', 'off')
+            if not dual2_off:
+                logger.error("关闭双2（低压电磁阀）失败")
+                return
+            logger.info("双2（低压电磁阀）关闭成功")
 
-    async def _execute_preprocessing_step(self, step: PreprocessingStep) -> Dict[str, Any]:
-        """执行预处理步骤"""
-        try:
-            # 根据步骤类型执行不同操作
-            if step.step_type == "prime_pumps":
-                await self._prime_pumps(step.parameters)
-            elif step.step_type == "equilibrate_column":
-                await self._equilibrate_column(step.parameters)
-            elif step.step_type == "wash_lines":
-                await self._wash_lines(step.parameters)
-            elif step.step_type == "check_baseline":
-                await self._check_baseline(step.parameters)
+            # 3. 多9开到通道5
+            valve9_set = await self.multi_valve.set_position('多9', 5)
+            if not valve9_set:
+                logger.error("设置多9到通道5失败")
+                return
+            logger.info("多9设置到通道5成功")
+
+            # 4. 开启泵2（气泵）
+            pump2_on = await self.relay_controller.control_relay('泵2', 'on')
+            if not pump2_on:
+                logger.error("开启泵2（气泵）失败")
+                return
+            logger.info("泵2（气泵）开启成功")
+
+            # 5. 开始计时等待
+            logger.info(f"吹扫柱子进行中，等待 {purge_time_min} 分钟...")
+
+            # 等待指定的吹扫时间
+            await asyncio.sleep(purge_time_min * 60)  # 转换为秒
+
+            # 6. 停止所有操作
+            # 关闭泵2（气泵）
+            pump2_off = await self.relay_controller.control_relay('泵2', 'off')
+            if not pump2_off:
+                logger.warning("关闭泵2（气泵）失败")
             else:
-                # 通用步骤处理
-                await asyncio.sleep(step.duration_seconds or 1)
+                logger.info("泵2（气泵）关闭成功")
 
-            return {
-                "step_name": step.step_name,
-                "success": True,
-                "duration": step.duration_seconds or 1
-            }
+            # 关闭双1（高压电磁阀）
+            dual1_off = await self.relay_controller.control_relay('双1', 'off')
+            if not dual1_off:
+                logger.warning("关闭双1（高压电磁阀）失败")
+            else:
+                logger.info("双1（高压电磁阀）关闭成功")
+
+            logger.info("吹扫柱子完成")
+
+            # 发布完成消息
+            if self.mqtt_manager:
+                await self.mqtt_manager.publish_data(
+                    "system/preprocessing_status",
+                    {
+                        "action": "purge_column",
+                        "experiment_id": self.current_experiment_id,
+                        "time": purge_time_min,
+                        "status": "completed",
+                        "timestamp": datetime.now().isoformat()
+                    }
+                )
+
         except Exception as e:
-            return {
-                "step_name": step.step_name,
-                "success": False,
-                "error": str(e)
-            }
+            logger.error(f"吹扫柱子过程中发生异常: {e}")
+            # 确保在异常情况下也停止所有设备
+            try:
+                await self.relay_controller.control_relay('泵2', 'off')
+                await self.relay_controller.control_relay('双1', 'off')
+                await self.relay_controller.control_relay('双2', 'off')
+            except:
+                pass
 
-    async def _prime_pumps(self, parameters: Dict[str, Any]):
-        """启动泵"""
-        await asyncio.sleep(parameters.get("duration", 30))
+    async def execute_preprocessing(self, experiment_id: int) -> bool:
+        """
+        执行预处理流程
+        按顺序执行：吹扫柱子 -> 吹扫系统 -> 柱平衡
+        :param experiment_id: 实验ID
+        :return: 执行结果，全部成功返回True，任何一步失败返回False
+        """
+        logger.info(f"开始执行预处理流程，实验ID: {experiment_id}")
 
-    async def _equilibrate_column(self, parameters: Dict[str, Any]):
-        """平衡色谱柱"""
-        await asyncio.sleep(parameters.get("duration", 300))
+        # 设置当前实验ID
+        self.current_experiment_id = experiment_id
 
-    async def _wash_lines(self, parameters: Dict[str, Any]):
-        """清洗管路"""
-        await asyncio.sleep(parameters.get("duration", 60))
-
-    async def _check_baseline(self, parameters: Dict[str, Any]):
-        """检查基线"""
-        await asyncio.sleep(parameters.get("duration", 120))
-
-    async def _get_all_device_statuses(self) -> Dict[str, Dict[str, Any]]:
-        """获取所有设备状态"""
-        # 模拟设备状态
-        devices = {}
-        for i in range(22):
-            devices[f"device_{i:02d}"] = {
-                "status": DeviceStatus.READY,
-                "critical": i < 5  # 前5个设备为关键设备
-            }
-        return devices
-
-    async def _log_system_check_event(self, result: SystemCheckResult):
-        """记录系统检查事件"""
         try:
-            await self.db_manager.log_system_event(
-                "system_check",
-                "info" if result.overall_success else "warning",
-                "preprocessing_manager",
-                f"系统检查完成: {result.overall_success}",
-                result.dict()
-            )
-        except Exception as e:
-            logger.error(f"记录系统检查事件失败: {e}")
+            # 发布预处理开始消息
+            if self.mqtt_manager:
+                await self.mqtt_manager.publish_data(
+                    "system/preprocessing_status",
+                    {
+                        "action": "preprocessing_sequence",
+                        "experiment_id": self.current_experiment_id,
+                        "status": "started",
+                        "timestamp": datetime.now().isoformat()
+                    }
+                )
 
-    async def _log_calibration_event(self, result: CalibrationResult):
-        """记录校准事件"""
-        try:
-            await self.db_manager.log_system_event(
-                "system_calibration",
-                "info" if result.overall_success else "warning",
-                "preprocessing_manager",
-                f"系统校准完成: {result.overall_success}",
-                result.dict()
-            )
+            # 1. 执行吹扫柱子
+            logger.info("步骤1: 执行吹扫柱子")
+            try:
+                await self._purge_column({})
+                logger.info("吹扫柱子执行完成")
+            except Exception as e:
+                logger.error(f"吹扫柱子执行失败: {e}")
+                return False
+
+            # 2. 执行吹扫系统
+            logger.info("步骤2: 执行吹扫系统")
+            try:
+                await self._purge_system({})
+                logger.info("吹扫系统执行完成")
+            except Exception as e:
+                logger.error(f"吹扫系统执行失败: {e}")
+                return False
+
+            # 3. 执行柱平衡
+            logger.info("步骤3: 执行柱平衡")
+            try:
+                await self._equilibrate_column({})
+                logger.info("柱平衡执行完成")
+            except Exception as e:
+                logger.error(f"柱平衡执行失败: {e}")
+                return False
+
+            logger.info("预处理流程全部完成")
+
+            # 发布预处理完成消息
+            if self.mqtt_manager:
+                await self.mqtt_manager.publish_data(
+                    "system/preprocessing_status",
+                    {
+                        "action": "preprocessing_sequence",
+                        "experiment_id": self.current_experiment_id,
+                        "status": "completed",
+                        "timestamp": datetime.now().isoformat()
+                    }
+                )
+
+            return True
+
         except Exception as e:
-            logger.error(f"记录校准事件失败: {e}")
+            logger.error(f"预处理流程执行过程中发生异常: {e}")
+
+            # 发布预处理失败消息
+            if self.mqtt_manager:
+                await self.mqtt_manager.publish_data(
+                    "system/preprocessing_status",
+                    {
+                        "action": "preprocessing_sequence",
+                        "experiment_id": self.current_experiment_id,
+                        "status": "failed",
+                        "error": str(e),
+                        "timestamp": datetime.now().isoformat()
+                    }
+                )
+
+            return False
+
+

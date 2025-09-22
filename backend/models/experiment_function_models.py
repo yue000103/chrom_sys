@@ -52,6 +52,19 @@ class ExperimentProgress(BaseModel):
     total_steps: int = 0
     completed_steps: int = 0
 
+    # 试管收集相关字段
+    tube_collection_cache: List[List[float]] = Field(default_factory=list)  # [[start, end, tube_id], ...]
+    current_tube_id: int = 1
+    tube_start_time: float = 0.0  # 相对于实验开始的秒数
+    experiment_start_timestamp: float = 0.0  # 实验开始的绝对时间戳
+
+    # 检测器信号数据收集字段
+    detector_signal_cache: List[List[float]] = Field(default_factory=list)  # [[1.73427, 2.61003], [1.8, 2.5], ...]
+    signal_collection_active: bool = False  # 是否正在收集信号数据
+
+    class Config:
+        arbitrary_types_allowed = True
+
 
 class ExperimentControl(BaseModel):
     """实验控制模型"""
