@@ -35,8 +35,14 @@ class MQTTManager:
         self._thread = None
         self.message_handlers: Dict[str, Callable] = {}
 
+        # 重连配置
+        self.reconnect_enabled = True
+        self.reconnect_delay = 5  # 重连延迟（秒）
+        self.max_reconnect_attempts = 10
+        self.reconnect_count = 0
+
     async def connect(self):
-        self.mqtt_ = """连接到MQTT服务器"""
+        """连接到MQTT服务器"""
         try:
             logger.info(f"连接MQTT服务器: {self.broker_host}:{self.broker_port}")
 
@@ -85,6 +91,7 @@ class MQTTManager:
         """连接回调函数"""
         if rc == 0:
             self.is_connected = True
+            self.reconnect_count = 0  # 重置重连计数
             logger.info("MQTT连接建立成功")
         else:
             logger.error(f"MQTT连接失败，错误码: {rc}")
@@ -92,7 +99,11 @@ class MQTTManager:
     def _on_disconnect(self, client, userdata, rc):
         """断开连接回调函数"""
         self.is_connected = False
-        logger.info("MQTT连接断开")
+        logger.warning("MQTT连接断开")
+
+        # 如果是意外断开（rc != 0）且启用了重连，则尝试重连
+        if rc != 0 and self.reconnect_enabled:
+            self._attempt_reconnect()
 
     def _on_publish(self, client, userdata, mid):
         """消息发布回调函数"""
@@ -122,10 +133,41 @@ class MQTTManager:
         except Exception as e:
             logger.error(f"处理MQTT消息时出错: {e}")
 
+    def _attempt_reconnect(self):
+        """尝试重新连接"""
+        if self.reconnect_count >= self.max_reconnect_attempts:
+            logger.error(f"达到最大重连次数 {self.max_reconnect_attempts}，停止重连")
+            return
+
+        self.reconnect_count += 1
+        logger.info(f"尝试重连 MQTT ({self.reconnect_count}/{self.max_reconnect_attempts})...")
+
+        # 使用定时器延迟重连
+        def delayed_reconnect():
+            time.sleep(self.reconnect_delay)
+            if self.client and not self.is_connected:
+                try:
+                    self.client.reconnect()
+                    logger.info("MQTT重连命令已发送")
+                except Exception as e:
+                    logger.error(f"MQTT重连失败: {e}")
+                    # 如果重连失败，继续尝试
+                    if self.reconnect_count < self.max_reconnect_attempts:
+                        self._attempt_reconnect()
+
+        # 在新线程中延迟重连
+        reconnect_thread = threading.Thread(target=delayed_reconnect, daemon=True)
+        reconnect_thread.start()
+
     async def publish_data(self, topic: str, data: Any, qos: int = 0):
         """发布数据到MQTT - 实现开发文档要求的数据格式"""
         if not self.is_connected or not self.client:
             logger.warning(f"MQTT未连接，无法发布数据到 {topic}")
+
+            # 如果启用了重连且当前未在重连过程中，则尝试重连
+            if self.reconnect_enabled and self.reconnect_count < self.max_reconnect_attempts:
+                self._attempt_reconnect()
+
             return False
 
         try:
@@ -247,8 +289,28 @@ class MQTTManager:
         """发布数据到MQTT (别名)"""
         return await self.publish_data(topic, data, qos)
 
+    async def reconnect_mqtt(self):
+        """手动重连MQTT"""
+        if self.is_connected:
+            logger.info("MQTT已连接，无需重连")
+            return True
+
+        logger.info("手动触发MQTT重连...")
+        self.reconnect_count = 0  # 重置重连计数
+        self._attempt_reconnect()
+
+        # 等待连接建立
+        timeout = 10
+        while not self.is_connected and timeout > 0:
+            await asyncio.sleep(0.1)
+            timeout -= 0.1
+
+        return self.is_connected
+
     async def disconnect(self):
         """断开MQTT连接"""
+        self.reconnect_enabled = False  # 禁用自动重连
+
         if self.client:
             self.is_connected = False
             self.client.loop_stop()
@@ -265,5 +327,8 @@ class MQTTManager:
             "connected": self.is_connected,
             "broker": f"{self.broker_host}:{self.broker_port}",
             "client_id": self.client_id,
-            "subscribed_topics": list(self.message_handlers.keys())
+            "subscribed_topics": list(self.message_handlers.keys()),
+            "reconnect_enabled": self.reconnect_enabled,
+            "reconnect_count": self.reconnect_count,
+            "max_reconnect_attempts": self.max_reconnect_attempts
         }

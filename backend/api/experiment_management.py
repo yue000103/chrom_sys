@@ -15,6 +15,8 @@ from models.experiment_models import (
     ExperimentListResponse
 )
 from data.database_utils import ChromatographyDB
+from services.experiment_data_manager import ExperimentDataManager
+from core.mqtt_manager import MQTTManager
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -24,6 +26,11 @@ logger = logging.getLogger(__name__)
 def get_database() -> ChromatographyDB:
     """获取数据库实例"""
     return ChromatographyDB()
+
+def get_experiment_data_manager() -> ExperimentDataManager:
+    """获取实验数据管理器实例"""
+    mqtt_manager = MQTTManager()
+    return ExperimentDataManager(mqtt_manager)
 
 # ===== 实验数据管理API =====
 
@@ -311,3 +318,36 @@ async def delete_experiment(
     except Exception as e:
         logger.error(f"删除实验失败: {e}")
         raise HTTPException(status_code=500, detail=f"删除实验失败: {str(e)}")
+
+
+@router.get("/{experiment_id}/steps")
+async def get_experiment_steps(
+    experiment_id: int,
+    data_manager: ExperimentDataManager = Depends(get_experiment_data_manager)
+):
+    """
+    获取指定实验的步骤列表
+
+    Args:
+        experiment_id: 实验ID
+
+    Returns:
+        dict: 包含实验步骤列表的响应
+    """
+    try:
+        logger.info(f"获取实验步骤: {experiment_id}")
+
+        # 调用实验数据管理器的方法获取步骤列表
+        steps = data_manager.get_experiment_steps(str(experiment_id))
+
+        return {
+            "success": True,
+            "message": "获取实验步骤成功",
+            "experiment_id": experiment_id,
+            "steps": steps,
+            "total_steps": len(steps)
+        }
+
+    except Exception as e:
+        logger.error(f"获取实验步骤失败: {e}")
+        raise HTTPException(status_code=500, detail=f"获取实验步骤失败: {str(e)}")

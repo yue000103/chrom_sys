@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional, Tuple
 import numpy as np
 from core.mqtt_manager import MQTTManager
-from core.database import DatabaseManager
+from data.database_utils import ChromatographyDB
 from models.experiment_data_models import (
     SensorDataPoint,
     PeakInfo,
@@ -18,7 +18,9 @@ from models.experiment_data_models import (
     DataExportRequest,
     DataExportFormat,
     ProcessingParameters,
-    BaselineInfo
+    BaselineInfo,
+    DataType,
+    DataQuality
 )
 
 logger = logging.getLogger(__name__)
@@ -27,9 +29,9 @@ logger = logging.getLogger(__name__)
 class ExperimentDataManager:
     """实验数据管理器"""
 
-    def __init__(self, mqtt_manager: MQTTManager, db_manager: DatabaseManager):
+    def __init__(self, mqtt_manager: MQTTManager):
         self.mqtt_manager = mqtt_manager
-        self.db_manager = db_manager
+        self.db = ChromatographyDB()
         self.active_experiments: Dict[str, Dict[str, Any]] = {}
         self.data_buffers: Dict[str, List[SensorDataPoint]] = {}
         self.processing_queue: List[Dict[str, Any]] = []
@@ -316,25 +318,37 @@ class ExperimentDataManager:
         experiment_info = self.active_experiments[experiment_id]
         devices = experiment_info["devices"]
 
-        for device in devices:
+        for i, device in enumerate(devices):
             # 模拟不同设备的数据
             if device == "detector":
                 value = np.random.normal(0.5, 0.1)  # 模拟检测器信号
+                data_type = DataType.DETECTOR
+                unit = "AU"
             elif device == "pressure":
                 value = np.random.normal(200, 5)     # 模拟压力传感器
+                data_type = DataType.PRESSURE
+                unit = "bar"
             elif device == "flow":
                 value = np.random.normal(1.0, 0.02)  # 模拟流量传感器
+                data_type = DataType.FLOW
+                unit = "mL/min"
             else:
                 value = np.random.random()
+                data_type = DataType.DETECTOR  # 默认类型
+                unit = "AU"
+
+            # 生成唯一的数据ID
+            data_id = f"{experiment_id}_{device}_{int(current_time.timestamp() * 1000)}_{i}"
 
             data_point = SensorDataPoint(
+                data_id=data_id,
                 experiment_id=experiment_id,
                 device_id=device,
                 timestamp=current_time,
-                time_minutes=(current_time - experiment_info["start_time"]).total_seconds() / 60,
                 value=value,
-                unit="AU" if device == "detector" else ("bar" if device == "pressure" else "mL/min"),
-                quality_flag="good"
+                unit=unit,
+                data_type=data_type,
+                quality=DataQuality.GOOD
             )
             data_points.append(data_point)
 
@@ -389,13 +403,14 @@ class ExperimentDataManager:
             baseline = np.mean([dp.value for dp in data[start_idx:end_idx]])
 
             corrected_point = SensorDataPoint(
+                data_id=f"{point.data_id}_corrected",
                 experiment_id=point.experiment_id,
                 device_id=point.device_id,
                 timestamp=point.timestamp,
-                time_minutes=point.time_minutes,
                 value=point.value - baseline,
                 unit=point.unit,
-                quality_flag=point.quality_flag
+                data_type=point.data_type,
+                quality=point.quality
             )
             corrected_data.append(corrected_point)
 
@@ -416,13 +431,14 @@ class ExperimentDataManager:
             filtered_value = np.mean([dp.value for dp in data[start_idx:end_idx]])
 
             filtered_point = SensorDataPoint(
+                data_id=f"{point.data_id}_filtered",
                 experiment_id=point.experiment_id,
                 device_id=point.device_id,
                 timestamp=point.timestamp,
-                time_minutes=point.time_minutes,
                 value=filtered_value,
                 unit=point.unit,
-                quality_flag=point.quality_flag
+                data_type=point.data_type,
+                quality=point.quality
             )
             filtered_data.append(filtered_point)
 
@@ -448,7 +464,12 @@ class ExperimentDataManager:
 
         peaks = []
         values = [dp.value for dp in data]
-        times = [dp.time_minutes for dp in data]
+        # 计算相对于第一个数据点的时间差（分钟）
+        if data:
+            start_time = data[0].timestamp
+            times = [(dp.timestamp - start_time).total_seconds() / 60 for dp in data]
+        else:
+            times = []
 
         # 寻找局部最大值
         for i in range(1, len(values) - 1):
@@ -462,14 +483,14 @@ class ExperimentDataManager:
                     peak = PeakInfo(
                         experiment_id=data[i].experiment_id,
                         peak_id=f"peak_{len(peaks)+1:03d}",
-                        retention_time_minutes=times[i],
-                        peak_height=values[i],
-                        peak_area=values[i] * peak_width,  # 简化面积计算
-                        peak_width_minutes=peak_width,
-                        start_time_minutes=times[max(0, i-5)],
-                        end_time_minutes=times[min(len(times)-1, i+5)],
-                        peak_type="gaussian",
-                        confidence_score=0.9
+                        peak_number=len(peaks)+1,
+                        retention_time=times[i],
+                        height=values[i],
+                        area=values[i] * peak_width,  # 简化面积计算
+                        width_at_half_height=peak_width,
+                        baseline_start=times[max(0, i-5)],
+                        baseline_end=times[min(len(times)-1, i+5)],
+                        confidence=0.9
                     )
                     peaks.append(peak)
 
@@ -514,7 +535,7 @@ class ExperimentDataManager:
 
         # 计算信噪比
         if peaks:
-            max_signal = max(peak.peak_height for peak in peaks)
+            max_signal = max(peak.height for peak in peaks)
             snr = max_signal / noise_level if noise_level > 0 else 100
         else:
             snr = 1
@@ -545,8 +566,8 @@ class ExperimentDataManager:
             current_peak = peaks[i]
             next_peak = peaks[i + 1]
 
-            time_diff = next_peak.retention_time_minutes - current_peak.retention_time_minutes
-            width_sum = current_peak.peak_width_minutes + next_peak.peak_width_minutes
+            time_diff = next_peak.retention_time - current_peak.retention_time
+            width_sum = current_peak.width_at_half_height + next_peak.width_at_half_height
 
             resolution = (2 * time_diff) / width_sum if width_sum > 0 else 0
             min_resolution = min(min_resolution, resolution * 50)  # 转换为0-100分数
@@ -651,3 +672,56 @@ class ExperimentDataManager:
         """导出为JSON格式"""
         # 实现JSON导出逻辑
         return [f"{request.experiment_id}_data.json"]
+
+    def get_experiment_steps(self, experiment_id: str) -> List[str]:
+        """
+        根据experiment_id获取实验的所有步骤列表
+
+        Args:
+            experiment_id: 实验ID
+
+        Returns:
+            List[str]: 按顺序排列的实验步骤列表
+        """
+        try:
+            # 查询实验信息
+            experiments = self.db.query_data(
+                "experiments",
+                where_condition="experiment_id = ?",
+                where_params=(experiment_id,)
+            )
+
+            if not experiments:
+                logger.warning(f"未找到实验ID: {experiment_id}，返回默认步骤")
+                return ["collect", "post_processing"]
+
+            experiment = experiments[0]
+            steps = []
+
+            # 按照预处理顺序添加步骤
+
+            # 1. 吹扫柱子
+            if experiment.get('purge_column') == 1:
+                steps.append("purge_column")
+
+            # 2. 吹扫系统
+            if experiment.get('purge_system') == 1:
+                steps.append("purge_system")
+
+            # 3. 润柱 (柱平衡)
+            if experiment.get('column_balance') == 1:
+                steps.append("column_equilibration")
+
+            # 4. 收集 (固定步骤)
+            steps.append("collect")
+
+            # 5. 后处理 (固定步骤)
+            steps.append("post_processing")
+
+            logger.info(f"获取实验步骤: {experiment_id} -> {steps}")
+            return steps
+
+        except Exception as e:
+            logger.error(f"获取实验步骤失败: {e}")
+            # 返回最基本的步骤
+            return ["collect", "post_processing"]

@@ -17,7 +17,7 @@ from models.experiment_function_models import (
     ExperimentPhase
 )
 from core.mqtt_manager import MQTTManager
-from core.database import DatabaseManager
+from data.database_utils import ChromatographyDB
 from services.tube_manager import TubeCollectionManager
 from services.system_preprocessing_manager import SystemPreprocessingManager
 from hardware.host_devices.pump_controller import PumpController
@@ -28,13 +28,15 @@ logger = logging.getLogger(__name__)
 class ExperimentFunctionManager:
     """实验功能管理器"""
 
-    def __init__(self, mqtt_manager: MQTTManager, db_manager: DatabaseManager):
+    def __init__(self, mqtt_manager: MQTTManager):
         self.mqtt_manager = mqtt_manager
-        self.db_manager = db_manager
+        self.db = ChromatographyDB()
         self.running_experiments: Dict[str, ExperimentProgress] = {}
         # 移除实验队列，系统只支持单个实验执行
         # self.experiment_queue: List[ExperimentConfig] = []
         self.system_busy = False
+        # 实验数据缓存 - 避免重复查询数据库
+        self.experiment_data_cache: Dict[str, Dict[str, Any]] = {}
         # 当前正在运行的实验ID
         self.current_experiment_id: Optional[str] = None
         # 当前使用的架子ID
@@ -45,7 +47,7 @@ class ExperimentFunctionManager:
         self.detector_signal_topic = "chromatography/detector/detector_1/signal"
 
         # 初始化系统预处理管理器和泵控制器
-        self.preprocessing_manager = SystemPreprocessingManager(mqtt_manager, db_manager)
+        self.preprocessing_manager = SystemPreprocessingManager(mqtt_manager)
         self.pump_controller = PumpController(mock=True)
 
         # 梯度执行控制
@@ -65,11 +67,14 @@ class ExperimentFunctionManager:
         if not validation_result["valid"]:
             raise ValueError(f"实验配置无效: {validation_result['errors']}")
 
+        # 预加载实验相关的所有数据
+        await self._preload_experiment_data(config)
+
         # 获取方法信息并初始化试管收集管理器
-        method_info = await self._get_method_info_from_db(config.method_id)
+        method_info = self._get_cached_data(config.experiment_id, 'method_info')
 
         # 获取当前使用的架子信息
-        rack_info = await self._get_current_rack_info()
+        rack_info = self._get_cached_data(config.experiment_id, 'rack_info')
         self.current_rack_id = rack_info['rack_id']
 
         tube_manager = TubeCollectionManager(
@@ -101,8 +106,6 @@ class ExperimentFunctionManager:
         progress.detector_signal_cache = []
         progress.signal_collection_active = False
 
-        # 订阅检测器信号主题
-        await self._subscribe_detector_signal(config.experiment_id)
 
         # 添加到运行实验列表
         self.running_experiments[config.experiment_id] = progress
@@ -360,19 +363,45 @@ class ExperimentFunctionManager:
         """执行系统预处理阶段"""
         progress.current_phase = ExperimentPhase.PRE_EXPERIMENT
         progress.current_step = "开始系统预处理"
-        progress.progress_percentage = 5.0
+        progress.progress_percentage = 0.0
 
         logger.info(f"开始系统预处理: 实验 {experiment_id}")
 
+        # 获取实验数据
+        experiment_data = self._get_cached_data(experiment_id, 'experiment_info')
+        method_info = self._get_cached_data(experiment_id, 'method_info')
+
+        # 构建预处理数据
+        preprocessing_data = {
+            'experiment_id': experiment_id,
+            'preprocessing': {
+                'purge_system': experiment_data.get('purge_system', False),
+                'purge_column': experiment_data.get('purge_column', False),
+                'purge_column_time_min': experiment_data.get('purge_column_time_min', 0),
+                'column_balance': experiment_data.get('column_balance', False),
+                'column_balance_time_min': experiment_data.get('column_balance_time_min', 0),
+                'column_conditioning_solution': experiment_data.get('column_conditioning_solution')
+            },
+            'method_params': {
+                'wavelength': method_info.get('detector_wavelength', 254.0),
+                'flow_rates': {'A': method_info.get('flow_rate_ml_min', 1.0), 'B': 0.0, 'C': 0.0, 'D': 0.0}
+            }
+        }
+
         # 执行系统预处理：吹扫柱子 -> 吹扫系统 -> 柱平衡
-        preprocessing_success = await self.preprocessing_manager.execute_preprocessing(int(experiment_id))
+        preprocessing_success = await self.preprocessing_manager.execute_preprocessing(preprocessing_data)
 
         if not preprocessing_success:
             raise Exception("系统预处理失败")
 
-        progress.current_step = "系统预处理完成"
+        progress.current_step = "系统预处理完成，订阅检测器信号"
         progress.progress_percentage = 30.0
         logger.info(f"系统预处理完成: 实验 {experiment_id}")
+
+        # 系统预处理完成后订阅检测器信号
+        # 从column_balance步骤开始需要检测器信号数据
+        await self._subscribe_detector_signal(experiment_id)
+        logger.info(f"检测器信号订阅完成: 实验 {experiment_id}")
 
     async def _execute_formal_experiment_phase(self, experiment_id: str, progress: ExperimentProgress, config: ExperimentConfig):
         """执行正式实验阶段"""
@@ -392,13 +421,13 @@ class ExperimentFunctionManager:
         if not switch_success:
             raise Exception(f"切换到1号试管失败: tube_id={progress.current_tube_id}")
 
-        # 步骤2: 开始订阅检测器信号
-        progress.current_step = "开始信号收集"
+        # 步骤2: 激活检测器信号收集（订阅已在预处理完成后进行）
+        progress.current_step = "激活信号收集"
         progress.progress_percentage = 40.0
         await self._start_signal_collection(experiment_id)
 
         # 步骤3: 获取方法信息并开始梯度执行
-        method_info = await self._get_method_info_from_db(config.method_id)
+        method_info = await self._get_method_info_from_db(config.method_id, experiment_id)
         gradient_time_table = method_info.get('gradient_time_table', {})
 
         progress.current_step = "开始梯度执行和积分"
@@ -511,11 +540,13 @@ class ExperimentFunctionManager:
             # 将tube_collection_cache保存到数据库
             tube_collection_json = json.dumps(progress.tube_collection_cache)
 
-            # 这里需要调用数据库管理器更新实验数据
-            # await self.db_manager.update_experiment_data(
-            #     experiment_id,
-            #     {"tube_collection": tube_collection_json}
-            # )
+            # 更新实验数据中的试管收集信息
+            self.db.update_data(
+                "experiments",
+                {"tube_collection": tube_collection_json, "updated_at": datetime.now().isoformat()},
+                "experiment_id = ?",
+                (experiment_id,)
+            )
 
             logger.info(f"试管收集数据已保存: 实验 {experiment_id}, "
                        f"收集了 {len(progress.tube_collection_cache)} 个试管")
@@ -638,7 +669,7 @@ class ExperimentFunctionManager:
             return
 
         # 获取方法信息
-        method_info = await self._get_method_info_from_db(config.method_id)
+        method_info = await self._get_method_info_from_db(config.method_id, experiment_id)
         gradient_time_table = method_info.get('gradient_time_table', {})
 
         # 恢复梯度执行
@@ -671,7 +702,7 @@ class ExperimentFunctionManager:
             errors.append("实验ID不能为空")
         if not config.method_id:
             errors.append("方法ID不能为空")
-        if not config.smiles_id:
+        if not config.sample_id:
             errors.append("样品ID不能为空")
 
         return {
@@ -681,27 +712,92 @@ class ExperimentFunctionManager:
 
     def _estimate_completion_time(self, config: ExperimentConfig) -> datetime:
         """估算完成时间"""
-        # 简单估算，实际应根据方法参数计算
-        estimated_duration = timedelta(minutes=30)  # 默认30分钟
-        return datetime.now() + estimated_duration
+        try:
+            # 从缓存中获取方法信息和实验信息
+            method_info = self._get_cached_data(config.experiment_id, 'method_info')
+            experiment_info = self._get_cached_data(config.experiment_id, 'experiment_info')
+
+            # 获取时间参数
+            run_time_min = method_info.get('run_time_min', 0)
+            purge_column_time_min = experiment_info.get('purge_column_time_min', 0)
+            column_balance_time_min = experiment_info.get('column_balance_time_min', 0)
+
+            # 计算总时间：运行时间 + 吹扫柱时间 + 柱平衡时间
+            total_minutes = run_time_min + purge_column_time_min + column_balance_time_min
+
+            # 如果计算结果为0或异常，使用默认值30分钟
+            if total_minutes <= 0:
+                total_minutes = 30
+
+            estimated_duration = timedelta(minutes=total_minutes)
+            logger.info(f"估算完成时间: {total_minutes}分钟 (运行:{run_time_min} + 吹扫柱:{purge_column_time_min} + 柱平衡:{column_balance_time_min})")
+            return datetime.now() + estimated_duration
+
+        except Exception as e:
+            logger.error(f"估算完成时间失败: {e}")
+            # 出错时使用默认值
+            estimated_duration = timedelta(minutes=30)
+            return datetime.now() + estimated_duration
 
     def _calculate_total_steps(self, config: ExperimentConfig) -> int:
         """计算总步骤数"""
-        # 简单计算，实际应根据方法复杂度
-        return 10  # 默认10个步骤
-
-
-    async def _get_method_info_from_db(self, method_id: str) -> Dict[str, Any]:
-        """从数据库获取方法信息"""
         try:
-            # 这里需要调用数据库管理器获取方法的flow_rate_ml_min和collection_volume_ml
-            # method_info = await self.db_manager.get_method_by_id(method_id)
-            # 临时返回默认值，实际应该从数据库查询
-            method_info = {
-                'flow_rate_ml_min': 10.0,  # 默认流速 10 ml/min
-                'method_name': f'Method_{method_id}'
-            }
-            logger.info(f"获取方法信息: {method_id} -> {method_info}")
+            # 从缓存中获取实验信息
+            experiment_info = self._get_cached_data(config.experiment_id, 'experiment_info')
+
+            total_steps = 0
+
+            # 根据experiments表中的开关字段计算预处理步骤
+            if experiment_info.get('purge_system') == 1:
+                total_steps += 1  # 吹扫系统步骤
+
+            if experiment_info.get('purge_column') == 1:
+                total_steps += 1  # 吹扫柱子步骤
+
+            if experiment_info.get('column_balance') == 1:
+                total_steps += 1  # 柱平衡步骤
+
+            # 固定步骤：收集 + 后处理
+            total_steps += 1  # 收集步骤
+            total_steps += 1  # 后处理步骤
+
+            logger.info(f"计算总步骤数: {total_steps} "
+                       f"(吹扫系统:{experiment_info.get('purge_system', 0)} + "
+                       f"吹扫柱子:{experiment_info.get('purge_column', 0)} + "
+                       f"柱平衡:{experiment_info.get('column_balance', 0)} + "
+                       f"收集:1 + 后处理:1)")
+
+            return max(total_steps, 2)  # 至少2个步骤（收集 + 后处理）
+
+        except Exception as e:
+            logger.error(f"计算总步骤数失败: {e}")
+            return 2  # 默认2个步骤（最少步骤数）
+
+
+    async def _get_method_info_from_db(self, method_id: str, experiment_id: str = None) -> Dict[str, Any]:
+        """从数据库获取方法信息（优先从缓存获取）"""
+        # 如果提供了experiment_id，优先从缓存获取
+        if experiment_id and experiment_id in self.experiment_data_cache:
+            method_info = self._get_cached_data(experiment_id, 'method_info')
+            if method_info:
+                logger.debug(f"从缓存获取方法信息: {method_id} -> {method_info}")
+                return method_info
+
+        # 缓存中没有，从数据库查询
+        try:
+            # 通过method_id查询方法信息
+            methods = self.db.get_methods(method_id=int(method_id))
+
+            if not methods:
+                logger.warning(f"未找到方法ID: {method_id}，使用默认值")
+                return {
+                    'flow_rate_ml_min': 1.0,  # 默认流速 1 ml/min
+                    'method_name': f'Method_{method_id}',
+                    'collection_volume_ml': 2.0  # 默认收集体积
+                }
+
+            method_info = methods[0]
+            logger.info(f"从数据库获取方法信息: {method_id} -> {method_info}")
             return method_info
         except Exception as e:
             logger.error(f"获取方法信息失败: {e}")
@@ -714,13 +810,8 @@ class ExperimentFunctionManager:
     async def _log_experiment_event(self, experiment_id: str, event_type: str, details: Dict[str, Any]):
         """记录实验事件"""
         try:
-            await self.db_manager.log_system_event(
-                event_type,
-                "info",
-                "experiment_manager",
-                f"实验事件: {event_type}",
-                {"experiment_id": experiment_id, **details}
-            )
+            # 使用标准日志记录而不是数据库
+            logger.info(f"实验事件 [{experiment_id}]: {event_type}, 详情: {details}")
         except Exception as e:
             logger.error(f"记录实验事件失败: {e}")
 
@@ -1036,6 +1127,9 @@ class ExperimentFunctionManager:
         self.tube_managers.pop(experiment_id, None)
         self.system_busy = False
 
+        # 清理实验数据缓存
+        self._clear_experiment_cache(experiment_id)
+
         # 清理当前实验ID和架子ID
         if self.current_experiment_id == experiment_id:
             self.current_experiment_id = None
@@ -1046,8 +1140,9 @@ class ExperimentFunctionManager:
     async def _get_current_rack_info(self) -> Dict[str, Any]:
         """从数据库获取当前使用的架子信息"""
         try:
-            # 首先查询状态为"使用"的架子
-            active_racks = await self.db_manager.get_racks_by_status("使用")
+            # 首先查询所有架子，然后筛选状态为"使用"的
+            all_racks = self.db.get_rack_info()
+            active_racks = [rack for rack in all_racks if rack.get('status') == '使用']
 
             if active_racks:
                 # 如果找到状态为"使用"的架子，使用第一个
@@ -1086,7 +1181,7 @@ class ExperimentFunctionManager:
             # 2. 压力异常
             # 3. 流速异常
             # 4. 硬件故障
-            # alarms = await self.db_manager.get_critical_alarms()
+            # TODO: 实现从数据库获取关键报警信息的功能
 
             # 临时模拟报警检查逻辑
             # 实际应该从系统状态或数据库查询
@@ -1103,3 +1198,105 @@ class ExperimentFunctionManager:
     def get_current_rack_id(self) -> Optional[str]:
         """获取当前使用的架子ID"""
         return self.current_rack_id
+
+    async def _preload_experiment_data(self, config: ExperimentConfig) -> Dict[str, Any]:
+        """预加载实验相关的所有数据，避免后续重复查询数据库"""
+        try:
+            experiment_id = config.experiment_id
+
+            # 获取方法信息
+            method_info = {}
+            try:
+                methods = self.db.get_methods(method_id=int(config.method_id))
+                if methods and len(methods) > 0:
+                    method_info = methods[0]
+                    logger.info(f"预加载方法信息: {config.method_id} -> {method_info}")
+                else:
+                    logger.warning(f"未找到方法ID: {config.method_id}，使用默认值")
+                    method_info = {
+                        'flow_rate_ml_min': 1.0,
+                        'method_name': f'Method_{config.method_id}',
+                        'collection_volume_ml': 2.0,
+                        'run_time_min': 30,
+                        'gradient_time_table': {}
+                    }
+            except Exception as e:
+                logger.error(f"获取方法信息失败: {e}")
+                method_info = {
+                    'flow_rate_ml_min': 1.0,
+                    'method_name': 'Default_Method',
+                    'collection_volume_ml': 2.0,
+                    'run_time_min': 30,
+                    'gradient_time_table': {}
+                }
+
+            # 获取实验信息
+            experiment_info = {}
+            try:
+                experiments = self.db.query_data(
+                    "experiments",
+                    where_condition="id = ?",
+                    where_params=(int(config.experiment_id),)
+                )
+                if experiments and len(experiments) > 0:
+                    experiment_info = experiments[0]
+                    logger.info(f"预加载实验信息: {config.experiment_id} -> {experiment_info}")
+                else:
+                    logger.warning(f"未找到实验ID: {config.experiment_id}，使用默认值")
+                    experiment_info = {
+                        'purge_column_time_min': 5,
+                        'column_balance_time_min': 10,
+                        'collection_volume_ml': 2.0
+                    }
+            except Exception as e:
+                logger.error(f"获取实验信息失败: {e}")
+                experiment_info = {
+                    'purge_column_time_min': 5,
+                    'column_balance_time_min': 10,
+                    'collection_volume_ml': 2.0
+                }
+
+            # 获取架子信息
+            rack_info = await self._get_current_rack_info()
+
+            # 组装缓存数据
+            cached_data = {
+                'method_info': method_info,
+                'experiment_info': experiment_info,
+                'rack_info': rack_info,
+                'config': config.dict()
+            }
+
+            # 存储到缓存
+            self.experiment_data_cache[experiment_id] = cached_data
+
+            logger.info(f"实验数据预加载完成: {experiment_id}")
+            return cached_data
+
+        except Exception as e:
+            logger.error(f"预加载实验数据失败: {e}")
+            # 即使预加载失败，也要确保有基本的缓存结构
+            self.experiment_data_cache[config.experiment_id] = {
+                'method_info': {'flow_rate_ml_min': 1.0, 'run_time_min': 30},
+                'experiment_info': {'purge_column_time_min': 5, 'column_balance_time_min': 10},
+                'rack_info': {'rack_id': 'rack_001', 'tube_count': 40},
+                'config': config.dict()
+            }
+            return self.experiment_data_cache[config.experiment_id]
+
+    def _get_cached_data(self, experiment_id: str, data_type: str) -> Dict[str, Any]:
+        """从缓存中获取特定类型的数据"""
+        if experiment_id not in self.experiment_data_cache:
+            logger.warning(f"实验数据缓存未找到: {experiment_id}")
+            return {}
+
+        cached_data = self.experiment_data_cache[experiment_id]
+        return cached_data.get(data_type, {})
+
+    def _clear_experiment_cache(self, experiment_id: str):
+        """清理指定实验的缓存数据"""
+        if experiment_id in self.experiment_data_cache:
+            del self.experiment_data_cache[experiment_id]
+            logger.info(f"清理实验缓存数据: {experiment_id}")
+        else:
+            logger.warning(f"要清理的实验缓存不存在: {experiment_id}")

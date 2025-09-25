@@ -8,7 +8,6 @@ import logging
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from core.mqtt_manager import MQTTManager
-from core.database import DatabaseManager
 # from models.system_preprocessing_models import (
 #     SystemCheckConfig,
 #     SystemCheckResult,
@@ -30,9 +29,8 @@ logger = logging.getLogger(__name__)
 class SystemPreprocessingManager:
     """系统预处理管理器"""
 
-    def __init__(self, mqtt_manager: MQTTManager, db_manager: DatabaseManager):
+    def __init__(self, mqtt_manager: MQTTManager = None):
         self.mqtt_manager = mqtt_manager
-        self.db_manager = db_manager
         self.system_ready = False
         self.last_check_time: Optional[datetime] = None
 
@@ -42,15 +40,17 @@ class SystemPreprocessingManager:
         self.bubble_sensor = BubbleSensorHost(mock=True)
         self.relay_controller = RelayController(mock=True)
         self.multi_valve = MultiValveController(mock=True)
-        self.current_experiment_id: Optional[int] = None
+
+        # 当前实验数据缓存
+        self.current_experiment_data: Optional[Dict[str, Any]] = None
 
 
 
-    async def initialize_devices(self, wavelength: float = None, flow_rates: Dict[str, float] = None, gradient_profile: Dict[str, Any] = None) -> bool:
+    async def initialize_devices(self, experiment_data: Dict[str, Any] = None, wavelength: float = None, flow_rates: Dict[str, float] = None, gradient_profile: Dict[str, Any] = None) -> bool:
         """
         初始化设备
-        如果提供了参数，使用提供的参数；否则根据current_experiment_id从数据库获取方法参数
-        :param wavelength: 检测器波长（可选，如果不提供则从method获取）
+        :param experiment_data: 实验数据，包含方法参数等信息
+        :param wavelength: 检测器波长（可选）
         :param flow_rates: 四元泵流速设置 {'A': 1.0, 'B': 0.5, 'C': 0.0, 'D': 0.0}（可选）
         :param gradient_profile: 梯度洗脱参数（可选）
         :return: 初始化结果，任何一个步骤失败都返回False
@@ -58,18 +58,18 @@ class SystemPreprocessingManager:
         logger.info("开始设备初始化...")
 
         try:
-            # 如果没有提供参数且有current_experiment_id，则从数据库获取方法参数
-            if (wavelength is None or flow_rates is None or gradient_profile is None) and self.current_experiment_id:
-                method_params = await self._get_method_parameters_from_experiment(self.current_experiment_id)
-                if method_params:
-                    if wavelength is None:
-                        wavelength = method_params.get('wavelength', 254.0)
-                    if flow_rates is None:
-                        flow_rates = method_params.get('flow_rates')
+            # 缓存实验数据
+            if experiment_data:
+                self.current_experiment_data = experiment_data
 
-                    logger.info(f"从实验ID {self.current_experiment_id} 获取方法参数")
-                else:
-                    logger.warning(f"无法获取实验ID {self.current_experiment_id} 的方法参数，使用默认值")
+            # 从实验数据中获取参数
+            if self.current_experiment_data and (wavelength is None or flow_rates is None):
+                method_params = self.current_experiment_data.get('method_params', {})
+                if wavelength is None:
+                    wavelength = method_params.get('wavelength', 254.0)
+                if flow_rates is None:
+                    flow_rates = method_params.get('flow_rates')
+                logger.info("从实验数据获取方法参数")
 
             # 设置默认值
             if wavelength is None:
@@ -160,180 +160,19 @@ class SystemPreprocessingManager:
             logger.error(f"设备连接过程中发生异常: {e}")
             return False
 
-    async def _get_method_parameters_from_experiment(self, experiment_id: int) -> Optional[Dict[str, Any]]:
-        """
-        根据实验ID获取方法参数
-        :param experiment_id: 实验ID
-        :return: 方法参数字典
-        """
-        try:
-            # 查询实验获取method_id
-            experiment_query = """
-                SELECT method_id FROM experiments WHERE id = ?
-            """
-            experiment_result = await self.db_manager.fetch_one(experiment_query, (experiment_id,))
-
-            if not experiment_result:
-                logger.error(f"未找到实验ID: {experiment_id}")
-                return None
-
-            method_id = experiment_result['method_id']
-            logger.info(f"实验ID {experiment_id} 对应方法ID: {method_id}")
-
-            # 查询方法获取参数
-            method_query = """
-                SELECT detection_parameters, gradient_program, initial_flow_rates
-                FROM methods WHERE method_id = ?
-            """
-            method_result = await self.db_manager.fetch_one(method_query, (method_id,))
-
-            if not method_result:
-                logger.error(f"未找到方法ID: {method_id}")
-                return None
-
-            # 解析检测参数获取波长
-            detection_params = method_result.get('detection_parameters', {})
-            if isinstance(detection_params, str):
-                import json
-                detection_params = json.loads(detection_params)
-
-            wavelength = detection_params.get('wavelength_nm', 254.0)
-
-            # 解析梯度程序
-            gradient_program = method_result.get('gradient_program', {})
-            if isinstance(gradient_program, str):
-                import json
-                gradient_program = json.loads(gradient_program)
-
-            # 解析初始流速
-            flow_rates = method_result.get('initial_flow_rates', {})
-            if isinstance(flow_rates, str):
-                import json
-                flow_rates = json.loads(flow_rates)
-
-            # 如果没有初始流速，从梯度程序的第一步获取
-            if not flow_rates and gradient_program:
-                steps = gradient_program.get('steps', [])
-                if steps and len(steps) > 0:
-                    first_step = steps[0]
-                    flow_rates = {
-                        'A': first_step.get('flow_a_ml_min', 1.0),
-                        'B': first_step.get('flow_b_ml_min', 0.0),
-                        'C': first_step.get('flow_c_ml_min', 0.0),
-                        'D': first_step.get('flow_d_ml_min', 0.0)
-                    }
-
-            return {
-                'wavelength': wavelength,
-                'flow_rates': flow_rates,
-                'gradient_profile': gradient_program
-            }
-
-        except Exception as e:
-            logger.error(f"获取方法参数失败: {e}")
-            return None
-
-    async def _get_experiment_column_balance_params(self, experiment_id: int) -> Optional[Dict[str, Any]]:
-        """
-        获取实验的柱平衡参数
-        :param experiment_id: 实验ID
-        :return: 柱平衡参数字典
-        """
-        try:
-            experiment_query = """
-                SELECT column_balance, column_balance_time_min, column_conditioning_solution
-                FROM experiments WHERE id = ?
-            """
-            result = await self.db_manager.fetch_one(experiment_query, (experiment_id,))
-
-            if not result:
-                logger.error(f"未找到实验ID: {experiment_id}")
-                return None
-
-            return {
-                'column_balance': result.get('column_balance', False),
-                'column_balance_time_min': result.get('column_balance_time_min', 0),
-                'column_conditioning_solution': result.get('column_conditioning_solution')
-            }
-
-        except Exception as e:
-            logger.error(f"获取实验柱平衡参数失败: {e}")
-            return None
-
-    async def _get_experiment_purge_params(self, experiment_id: int) -> Optional[Dict[str, Any]]:
-        """
-        获取实验的吹扫系统参数
-        :param experiment_id: 实验ID
-        :return: 吹扫参数字典
-        """
-        try:
-            experiment_query = """
-                SELECT purge_system
-                FROM experiments WHERE id = ?
-            """
-            result = await self.db_manager.fetch_one(experiment_query, (experiment_id,))
-
-            if not result:
-                logger.error(f"未找到实验ID: {experiment_id}")
-                return None
-
-            return {
-                'purge_system': result.get('purge_system', False)
-            }
-
-        except Exception as e:
-            logger.error(f"获取实验吹扫参数失败: {e}")
-            return None
-
-    async def _get_experiment_purge_column_params(self, experiment_id: int) -> Optional[Dict[str, Any]]:
-        """
-        获取实验的吹扫柱子参数
-        :param experiment_id: 实验ID
-        :return: 吹扫柱子参数字典
-        """
-        try:
-            experiment_query = """
-                SELECT purge_column, purge_column_time_min
-                FROM experiments WHERE id = ?
-            """
-            result = await self.db_manager.fetch_one(experiment_query, (experiment_id,))
-
-            if not result:
-                logger.error(f"未找到实验ID: {experiment_id}")
-                return None
-
-            return {
-                'purge_column': result.get('purge_column', False),
-                'purge_column_time_min': result.get('purge_column_time_min', 0)
-            }
-
-        except Exception as e:
-            logger.error(f"获取实验吹扫柱子参数失败: {e}")
-            return None
 
     async def _equilibrate_column(self, parameters: Dict[str, Any]):
         """
         平衡色谱柱
-        根据experiment中的column_balance参数执行柱平衡操作
-        :param parameters: 可能包含实验ID或直接的平衡参数
+        :param parameters: 平衡参数，包含column_balance, column_balance_time_min, column_conditioning_solution
         """
         logger.info("开始柱平衡操作...")
 
         try:
-            # 获取柱平衡参数
-            balance_params = None
-
-            # 如果有current_experiment_id，从数据库获取参数
-            if self.current_experiment_id:
-                balance_params = await self._get_experiment_column_balance_params(self.current_experiment_id)
-
-            # 如果parameters中直接提供了参数，优先使用
-            if parameters:
-                balance_params = {
-                    'column_balance': parameters.get('column_balance', balance_params.get('column_balance', False) if balance_params else False),
-                    'column_balance_time_min': parameters.get('column_balance_time_min', balance_params.get('column_balance_time_min', 0) if balance_params else 0),
-                    'column_conditioning_solution': parameters.get('column_conditioning_solution', balance_params.get('column_conditioning_solution') if balance_params else None)
-                }
+            # 从实验数据或参数中获取柱平衡设置
+            balance_params = parameters
+            if not balance_params and self.current_experiment_data:
+                balance_params = self.current_experiment_data.get('preprocessing', {})
 
             if not balance_params:
                 logger.warning("未获取到柱平衡参数，跳过柱平衡")
@@ -351,6 +190,7 @@ class SystemPreprocessingManager:
                 logger.warning("柱平衡时间为0或未设置，跳过柱平衡")
                 return
 
+            experiment_id = self.current_experiment_data.get('experiment_id') if self.current_experiment_data else None
             logger.info(f"开始柱平衡: 时间={balance_time_min}分钟, 润柱溶液={conditioning_solution}")
 
             # 发布开始消息
@@ -359,7 +199,7 @@ class SystemPreprocessingManager:
                     "system/preprocessing_status",
                     {
                         "action": "column_equilibration",
-                        "experiment_id": self.current_experiment_id,
+                        "experiment_id": experiment_id,
                         "time": balance_time_min,
                         "status": "started",
                         "timestamp": datetime.now().isoformat()
@@ -434,7 +274,7 @@ class SystemPreprocessingManager:
                     "system/preprocessing_status",
                     {
                         "action": "column_equilibration",
-                        "experiment_id": self.current_experiment_id,
+                        "experiment_id": experiment_id,
                         "time": balance_time_min,
                         "status": "completed",
                         "timestamp": datetime.now().isoformat()
@@ -453,24 +293,15 @@ class SystemPreprocessingManager:
     async def _purge_system(self, parameters: Dict[str, Any]):
         """
         吹扫系统
-        根据experiment中的purge_system参数执行系统吹扫操作
-        :param parameters: 可能包含实验ID或直接的吹扫参数
+        :param parameters: 吹扫参数，包含purge_system
         """
         logger.info("开始吹扫系统操作...")
 
         try:
-            # 获取吹扫参数
-            purge_params = None
-
-            # 如果有current_experiment_id，从数据库获取参数
-            if self.current_experiment_id:
-                purge_params = await self._get_experiment_purge_params(self.current_experiment_id)
-
-            # 如果parameters中直接提供了参数，优先使用
-            if parameters:
-                purge_params = {
-                    'purge_system': parameters.get('purge_system', purge_params.get('purge_system', False) if purge_params else False)
-                }
+            # 从实验数据或参数中获取吹扫设置
+            purge_params = parameters
+            if not purge_params and self.current_experiment_data:
+                purge_params = self.current_experiment_data.get('preprocessing', {})
 
             if not purge_params:
                 logger.warning("未获取到吹扫参数，跳过吹扫系统")
@@ -481,6 +312,7 @@ class SystemPreprocessingManager:
                 logger.info("实验设置不需要吹扫系统，跳过")
                 return
 
+            experiment_id = self.current_experiment_data.get('experiment_id') if self.current_experiment_data else None
             logger.info("开始执行系统吹扫，等待50秒...")
 
             # 发布开始消息
@@ -489,7 +321,7 @@ class SystemPreprocessingManager:
                     "system/preprocessing_status",
                     {
                         "action": "purge_system",
-                        "experiment_id": self.current_experiment_id,
+                        "experiment_id": experiment_id,
                         "status": "started",
                         "timestamp": datetime.now().isoformat()
                     }
@@ -506,7 +338,7 @@ class SystemPreprocessingManager:
                     "system/preprocessing_status",
                     {
                         "action": "purge_system",
-                        "experiment_id": self.current_experiment_id,
+                        "experiment_id": experiment_id,
                         "status": "completed",
                         "timestamp": datetime.now().isoformat()
                     }
@@ -518,25 +350,15 @@ class SystemPreprocessingManager:
     async def _purge_column(self, parameters: Dict[str, Any]):
         """
         吹扫柱子
-        根据experiment中的purge_column参数执行柱子吹扫操作
-        :param parameters: 可能包含实验ID或直接的吹扫参数
+        :param parameters: 吹扫参数，包含purge_column, purge_column_time_min
         """
         logger.info("开始吹扫柱子操作...")
 
         try:
-            # 获取吹扫柱子参数
-            purge_params = None
-
-            # 如果有current_experiment_id，从数据库获取参数
-            if self.current_experiment_id:
-                purge_params = await self._get_experiment_purge_column_params(self.current_experiment_id)
-
-            # 如果parameters中直接提供了参数，优先使用
-            if parameters:
-                purge_params = {
-                    'purge_column': parameters.get('purge_column', purge_params.get('purge_column', False) if purge_params else False),
-                    'purge_column_time_min': parameters.get('purge_column_time_min', purge_params.get('purge_column_time_min', 0) if purge_params else 0)
-                }
+            # 从实验数据或参数中获取吹扫柱子设置
+            purge_params = parameters
+            if not purge_params and self.current_experiment_data:
+                purge_params = self.current_experiment_data.get('preprocessing', {})
 
             if not purge_params:
                 logger.warning("未获取到吹扫柱子参数，跳过吹扫柱子")
@@ -552,6 +374,7 @@ class SystemPreprocessingManager:
                 logger.warning("吹扫柱子时间为0或未设置，跳过吹扫柱子")
                 return
 
+            experiment_id = self.current_experiment_data.get('experiment_id') if self.current_experiment_data else None
             logger.info(f"开始吹扫柱子: 时间={purge_time_min}分钟")
 
             # 发布开始消息
@@ -560,7 +383,7 @@ class SystemPreprocessingManager:
                     "system/preprocessing_status",
                     {
                         "action": "purge_column",
-                        "experiment_id": self.current_experiment_id,
+                        "experiment_id": experiment_id,
                         "time": purge_time_min,
                         "status": "started",
                         "timestamp": datetime.now().isoformat()
@@ -616,6 +439,13 @@ class SystemPreprocessingManager:
             else:
                 logger.info("双1（高压电磁阀）关闭成功")
 
+            # 关闭双2（低压电磁阀）
+            dual2_off = await self.relay_controller.control_relay('双2', 'off')
+            if not dual2_off:
+                logger.warning("关闭双2（低压电磁阀）失败")
+            else:
+                logger.info("双2（低压电磁阀）关闭成功")
+
             logger.info("吹扫柱子完成")
 
             # 发布完成消息
@@ -624,7 +454,7 @@ class SystemPreprocessingManager:
                     "system/preprocessing_status",
                     {
                         "action": "purge_column",
-                        "experiment_id": self.current_experiment_id,
+                        "experiment_id": experiment_id,
                         "time": purge_time_min,
                         "status": "completed",
                         "timestamp": datetime.now().isoformat()
@@ -641,17 +471,19 @@ class SystemPreprocessingManager:
             except:
                 pass
 
-    async def execute_preprocessing(self, experiment_id: int) -> bool:
+    async def execute_preprocessing(self, experiment_data: Dict[str, Any]) -> bool:
         """
         执行预处理流程
         按顺序执行：吹扫柱子 -> 吹扫系统 -> 柱平衡
-        :param experiment_id: 实验ID
+        :param experiment_data: 实验数据，包含预处理配置
         :return: 执行结果，全部成功返回True，任何一步失败返回False
         """
+        experiment_id = experiment_data.get('experiment_id', 'unknown')
         logger.info(f"开始执行预处理流程，实验ID: {experiment_id}")
 
-        # 设置当前实验ID
-        self.current_experiment_id = experiment_id
+        # 缓存实验数据
+        self.current_experiment_data = experiment_data
+        preprocessing_config = experiment_data.get('preprocessing', {})
 
         try:
             # 发布预处理开始消息
@@ -660,7 +492,7 @@ class SystemPreprocessingManager:
                     "system/preprocessing_status",
                     {
                         "action": "preprocessing_sequence",
-                        "experiment_id": self.current_experiment_id,
+                        "experiment_id": experiment_id,
                         "status": "started",
                         "timestamp": datetime.now().isoformat()
                     }
@@ -669,7 +501,7 @@ class SystemPreprocessingManager:
             # 1. 执行吹扫柱子
             logger.info("步骤1: 执行吹扫柱子")
             try:
-                await self._purge_column({})
+                await self._purge_column(preprocessing_config)
                 logger.info("吹扫柱子执行完成")
             except Exception as e:
                 logger.error(f"吹扫柱子执行失败: {e}")
@@ -678,7 +510,7 @@ class SystemPreprocessingManager:
             # 2. 执行吹扫系统
             logger.info("步骤2: 执行吹扫系统")
             try:
-                await self._purge_system({})
+                await self._purge_system(preprocessing_config)
                 logger.info("吹扫系统执行完成")
             except Exception as e:
                 logger.error(f"吹扫系统执行失败: {e}")
@@ -687,7 +519,7 @@ class SystemPreprocessingManager:
             # 3. 执行柱平衡
             logger.info("步骤3: 执行柱平衡")
             try:
-                await self._equilibrate_column({})
+                await self._equilibrate_column(preprocessing_config)
                 logger.info("柱平衡执行完成")
             except Exception as e:
                 logger.error(f"柱平衡执行失败: {e}")
@@ -701,7 +533,7 @@ class SystemPreprocessingManager:
                     "system/preprocessing_status",
                     {
                         "action": "preprocessing_sequence",
-                        "experiment_id": self.current_experiment_id,
+                        "experiment_id": experiment_id,
                         "status": "completed",
                         "timestamp": datetime.now().isoformat()
                     }
@@ -718,7 +550,7 @@ class SystemPreprocessingManager:
                     "system/preprocessing_status",
                     {
                         "action": "preprocessing_sequence",
-                        "experiment_id": self.current_experiment_id,
+                        "experiment_id": experiment_id,
                         "status": "failed",
                         "error": str(e),
                         "timestamp": datetime.now().isoformat()

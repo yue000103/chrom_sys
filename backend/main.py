@@ -28,7 +28,8 @@ logging.basicConfig(
 from core.mqtt_manager import MQTTManager
 from core.database import DatabaseManager
 from services.data_processor.host_devices_processor import HostDevicesProcessor
-from api import device_control,data_collection,system_management,chromatography,hardware_control,column_management,smiles_management,rack_info,tube_control,experiment_control,experiment_management,valve_path,method_control
+from api import device_control,data_collection,system_management,chromatography,hardware_control
+from api import main_router
 
 # 导入硬件设备控制器
 from hardware.host_devices.detector import DetectorController
@@ -49,81 +50,105 @@ async def lifespan(app: FastAPI):
     global mqtt_manager, db_manager, host_processor
 
     # 启动时初始化服务
-    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 液相色谱仪系统启动中...")
+    print("=" * 60)
+    print("液相色谱仪控制系统启动")
+    print("=" * 60)
 
     # 初始化数据库
     db_manager = DatabaseManager()
     await db_manager.initialize()
-    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 数据库连接成功")
 
     # 创建MQTT管理器
     mqtt_manager = MQTTManager()
     if await mqtt_manager.connect():
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] MQTT连接成功")
+        print("✓ MQTT连接成功")
 
         # 创建HostDevicesProcessor管理设备数据采集
         host_processor = HostDevicesProcessor(mqtt_manager)
 
         # 初始化硬件设备（mock模式）
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 初始化硬件设备...")
-
-        # 初始化检测器
         detector = DetectorController(mock=True)
         if hasattr(detector, 'connect'):
             await detector.connect()
-        # 设置双通道波长
         await detector.set_wavelength([120, 254])
-        # 启动检测
         await detector.start_detection()
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 检测器: A通道={detector.wavelength_a}nm, B通道={detector.wavelength_b}nm")
-
-        # 注册检测器到处理器
         host_processor.register_device("detector_1", detector)
+        print(f"✓ 检测器: A={detector.wavelength_a}nm, B={detector.wavelength_b}nm")
 
-        # 初始化压力传感器
         pressure_sensor = PressureSensor(mock=True)
         if hasattr(pressure_sensor, 'connect'):
             await pressure_sensor.connect()
         host_processor.register_device("pressure_1", pressure_sensor)
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 压力传感器: 已注册，将由处理器每2秒发布数据到MQTT")
+        print("✓ 压力传感器: 已连接")
 
-        # 初始化主机模块气泡传感器
         bubble_sensor_host = BubbleSensorHost(mock=True)
         await bubble_sensor_host.initialize()
         host_processor.register_device("bubble_host", bubble_sensor_host)
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 主机气泡传感器: 已注册，将由处理器每2秒发布数据到MQTT (气1-气4)")
+        print("✓ 主机气泡传感器: 已连接 (气泡1-4)")
 
-        # 初始化收集模块气泡传感器
         bubble_sensor_collect = BubbleSensorCollect(mock=True)
         host_processor.register_device("bubble_collect", bubble_sensor_collect)
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 收集气泡传感器: 已注册，将由处理器每2秒发布数据到MQTT (气5-气7)")
+        print("✓ 收集气泡传感器: 已连接 (气泡5-7)")
 
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 设备初始化完成")
-
-        # 设置采集间隔并启动自主数据采集
-        host_processor.set_collection_interval(1.0)  # 1秒采集一次
+        # 启动数据采集
+        host_processor.set_collection_interval(1.0)
         await host_processor.start()
 
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 数据采集已启动")
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 采集间隔: 1秒")
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] MQTT主题:")
-        print("  - 信号: chromatography/detector/detector_1/signal [A, B]")
-        print("  - 波长: chromatography/detector/detector_1/wavelength [254, 280]")
-        print("  - A通道: chromatography/detector/detector_1/channel_a")
-        print("  - B通道: chromatography/detector/detector_1/channel_b")
+        print("\n📡 MQTT发布主题:")
+        print("  🔍 检测器相关:")
+        print("    ├─ chromatography/detector/{device_id}/signal")
+        print("    ├─ chromatography/detector/{device_id}/wavelength")
+        print("    ├─ chromatography/detector/{device_id}/channel_a")
+        print("    ├─ chromatography/detector/{device_id}/channel_b")
+        print("    ├─ chromatography/detector/{device_id}/retention_time")
+        print("    └─ chromatography/detector/{device_id}/full_data")
+        print("  📊 传感器相关:")
+        print("    ├─ chromatography/pressure/{device_id}/data")
+        print("    ├─ chromatography/pressure/{device_id}/value")
+        print("    └─ chromatography/bubble/{device_id}/{sensor_id}")
+        print("  ⚙️ 硬件设备:")
+        print("    ├─ chromatography/pump/{device_id}/status")
+        print("    ├─ chromatography/relay/{device_id}/status")
+        print("    ├─ chromatography/valve/{device_id}/status")
+        print("    ├─ chromatography/multivalve/{device_id}/position")
+        print("    ├─ chromatography/led/status")
+        print("    └─ chromatography/spray_pump/status")
+        print("  🧪 实验数据:")
+        print("    ├─ data/collection_started")
+        print("    ├─ data/collection_completed")
+        print("    ├─ data/real_time_status")
+        print("    ├─ data/peak_detection_completed")
+        print("    └─ data/random")
+        print("  📋 系统管理:")
+        print("    ├─ system/status")
+        print("    ├─ system/preprocessing_status")
+        print("    ├─ chromatography/system/status")
+        print("    └─ chromatography/system/alert")
+        print("  🔬 实验流程:")
+        print("    ├─ experiments/status")
+        print("    ├─ experiments/tube_collection")
+        print("    ├─ experiments/signal_status")
+        print("    ├─ experiments/signal_final")
+        print("    └─ experiments/emergency")
+        print("  🧮 业务功能:")
+        print("    ├─ tubes/{operation}")
+        print("    ├─ methods/updated")
+        print("    ├─ gradient/{status}")
+        print("    ├─ hardware/gradient_control")
+        print("    └─ chromatography/data/aggregated")
+        print("\n✅ 系统就绪 - 数据采集运行中")
+        print("=" * 60)
     else:
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] MQTT连接失败")
+        print("❌ MQTT连接失败")
 
     yield
 
     # 关闭时清理资源
-    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 系统关闭中...")
+    print("\n" + "=" * 60)
+    print("系统关闭中...")
 
     if host_processor:
-        # 停止数据采集
         await host_processor.stop()
-
-        # 断开所有设备
         for device_name, device in host_processor.devices.items():
             try:
                 if hasattr(device, 'stop_detection'):
@@ -132,12 +157,14 @@ async def lifespan(app: FastAPI):
                     await device.disconnect()
             except Exception as e:
                 logger.error(f"断开设备 {device_name} 时出错: {e}")
-
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 数据采集已停止")
+        print("✓ 设备连接已断开")
 
     if mqtt_manager:
         await mqtt_manager.disconnect()
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] MQTT连接已断开")
+        print("✓ MQTT连接已断开")
+
+    print("✅ 系统已安全关闭")
+    print("=" * 60)
 
 app = FastAPI(title="液相色谱仪控制系统", version="1.0.0", lifespan=lifespan)
 
@@ -147,7 +174,6 @@ async def log_requests(request: Request, call_next):
     start_time = time.time()
 
     # 记录请求开始
-    print(f"API Request: {request.method} {request.url}")
     logger.info(f"API Request: {request.method} {request.url}")
 
     response = await call_next(request)
@@ -156,7 +182,6 @@ async def log_requests(request: Request, call_next):
     process_time = time.time() - start_time
 
     # 记录请求结束
-    print(f"API Response: {request.method} {request.url.path} - Status: {response.status_code} - Time: {process_time:.4f}s")
     logger.info(f"API Response: {request.method} {request.url.path} - Status: {response.status_code} - Time: {process_time:.4f}s")
 
     return response
@@ -171,21 +196,15 @@ app.add_middleware(
 )
 
 # 注册路由
+# 注册统一的API路由器（包含所有模块化的路由）
+app.include_router(main_router)
+
+# 注册其他独立的路由（在api/__init__.py中没有包含的）
 app.include_router(device_control.router, prefix="/api/devices", tags=["设备控制"])
 app.include_router(data_collection.router, prefix="/api/data", tags=["数据采集"])
 app.include_router(system_management.router, prefix="/api/system", tags=["系统管理"])
 app.include_router(chromatography.router, prefix="/api/chromatography", tags=["色谱仪"])
 app.include_router(hardware_control.router, tags=["硬件控制"])  # 硬件控制路由已包含/api/hardware前缀
-app.include_router(column_management.router, prefix="/api/columns", tags=["色谱柱管理"])
-app.include_router(smiles_management.router, prefix="/api/smiles", tags=["SMILES分子管理"])
-
-# 新增API路由
-app.include_router(rack_info.router, prefix="/api/racks", tags=["试管架管理"])
-app.include_router(tube_control.router, prefix="/api/tubes", tags=["试管控制"])
-app.include_router(experiment_control.router, prefix="/api/experiments", tags=["实验控制"])
-app.include_router(experiment_management.router, prefix="/api/experiment-data", tags=["实验数据管理"])
-app.include_router(valve_path.router, prefix="/api/valve-paths", tags=["阀门路径管理"])
-app.include_router(method_control.router, prefix="/api/method-control", tags=["方法控制"])
 
 @app.get("/")
 async def root():
@@ -221,19 +240,11 @@ async def get_publishing_status():
         }
 
 if __name__ == "__main__":
-    print("=" * 60)
-    print("液相色谱仪控制系统 - FastAPI后端")
-    print("实时数据采集和硬件设备控制")
-    print("MQTT服务器: broker.emqx.io:1883")
-    print("数据采集频率: 1Hz (1秒/次)")
-    print("检测器模拟: 双通道(A:254nm, B:280nm) 三个高斯峰(4min, 7min, 12min)")
-    print("=" * 60)
-
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
         port=8008,
         reload=True,
         log_level="info",
-        access_log=True
+        access_log=False
     )

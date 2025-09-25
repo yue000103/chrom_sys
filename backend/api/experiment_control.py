@@ -16,7 +16,6 @@ from models.experiment_control_models import (
 from models.experiment_function_models import ExperimentConfig
 from services.experiment_function_manager import ExperimentFunctionManager
 from core.mqtt_manager import MQTTManager
-from core.database import DatabaseManager
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -29,8 +28,7 @@ def get_experiment_manager() -> ExperimentFunctionManager:
     global _experiment_manager
     if _experiment_manager is None:
         mqtt_manager = MQTTManager()
-        db_manager = DatabaseManager()
-        _experiment_manager = ExperimentFunctionManager(mqtt_manager, db_manager)
+        _experiment_manager = ExperimentFunctionManager(mqtt_manager)
     return _experiment_manager
 
 # ===== 依赖注入 =====
@@ -51,7 +49,7 @@ async def get_experiment_status(
     try:
         # 检查实验是否存在
         experiments = db.query_data(
-            "experiment_data",
+            "experiments",
             where_condition="experiment_id = ?",
             where_params=(experiment_id,)
         )
@@ -134,7 +132,7 @@ async def start_experiment(
     try:
         # 检查实验是否存在
         experiments = db.query_data(
-            "experiment_data",
+            "experiments",
             where_condition="experiment_id = ?",
             where_params=(experiment_id,)
         )
@@ -143,6 +141,7 @@ async def start_experiment(
             raise HTTPException(status_code=404, detail=f"实验未找到: {experiment_id}")
 
         experiment = experiments[0]
+        print("实验信息:", experiment)
 
         # 获取实验管理器
         exp_manager = get_experiment_manager()
@@ -157,9 +156,9 @@ async def start_experiment(
             experiment_name=experiment.get('experiment_name', f'实验_{experiment_id}'),
             method_id=str(experiment.get('method_id', '')),
             sample_id=str(experiment.get('sample_id', '')),
-            collection_volume_ml=experiment.get('collection_volume_ml', 2.0),
-            created_by=experiment.get('created_by', 'system'),
-            description=experiment.get('description', '')
+            user_id=experiment.get('created_by', 'system'),
+            priority=experiment.get('priority', 1),
+            notes=experiment.get('description', '')
         )
 
         # 启动实验
@@ -167,7 +166,7 @@ async def start_experiment(
 
         # 更新数据库状态
         affected = db.update_data(
-            "experiment_data",
+            "experiments",
             {
                 "status": "running",
                 "updated_at": datetime.now().isoformat()
@@ -225,7 +224,7 @@ async def pause_experiment(
 
         # 更新数据库状态
         affected = db.update_data(
-            "experiment_data",
+            "experiments",
             {
                 "status": "paused",
                 "updated_at": datetime.now().isoformat()
@@ -239,7 +238,7 @@ async def pause_experiment(
 
         # 获取实验信息
         experiments = db.query_data(
-            "experiment_data",
+            "experiments",
             where_condition="experiment_id = ?",
             where_params=(experiment_id,)
         )
@@ -270,7 +269,7 @@ async def resume_experiment(
 
         # 检查实验是否存在
         experiments = db.query_data(
-            "experiment_data",
+            "experiments",
             where_condition="experiment_id = ?",
             where_params=(experiment_id,)
         )
@@ -293,7 +292,7 @@ async def resume_experiment(
 
         # 更新数据库状态
         affected = db.update_data(
-            "experiment_data",
+            "experiments",
             {
                 "status": "running",
                 "updated_at": datetime.now().isoformat()
@@ -330,7 +329,7 @@ async def terminate_experiment(
 
         # 检查实验是否存在
         experiments = db.query_data(
-            "experiment_data",
+            "experiments",
             where_condition="experiment_id = ?",
             where_params=(experiment_id,)
         )
@@ -350,7 +349,7 @@ async def terminate_experiment(
 
         # 更新数据库状态
         affected = db.update_data(
-            "experiment_data",
+            "experiments",
             {
                 "status": "terminated",
                 "updated_at": datetime.now().isoformat()
@@ -720,7 +719,7 @@ async def get_experiment_gradient_table(
     try:
         # 检查实验是否存在
         experiments = db.query_data(
-            "experiment_data",
+            "experiments",
             where_condition="experiment_id = ?",
             where_params=(experiment_id,)
         )
