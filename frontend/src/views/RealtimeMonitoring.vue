@@ -40,7 +40,10 @@
             <!-- 左侧：实时图表区域 -->
             <el-col :span="19">
                 <!-- 实时色谱图 -->
-                <div class="data-card chart-container-card">
+                <div
+                    class="data-card chart-container-card"
+                    :class="{ 'expanded-chart': !isFractionCollectorExpanded }"
+                >
                     <div class="data-card-header">
                         <h3 class="data-card-title">实时色谱图</h3>
                         <div class="chart-toolbar-inline">
@@ -161,7 +164,9 @@
                                             }}
                                         </template>
                                         <template
-                                            v-else-if="series.key === 'flowRate'"
+                                            v-else-if="
+                                                series.key === 'flowRate'
+                                            "
                                         >
                                             {{ series.label }}：12.0
                                         </template>
@@ -179,33 +184,20 @@
                         </div>
                     </div>
 
-                    <!-- 试管架可视化 -->
+                    <!-- 馏分收集器可折叠面板 -->
                     <div class="data-card tube-rack-card">
-                        <div class="data-card-header">
-                            <h3 class="data-card-title">馏分收集器</h3>
-                            <div class="rack-header-controls">
-                                <div class="rack-stats">
-                                    <span class="stat-item">
-                                        <span class="stat-number">
-                                            当前：{{ currentTube }}</span
-                                        >
-                                    </span>
-                                    <span class="stat-item">
-                                        <span class="stat-number"
-                                            >{{ completedTubes }}：已收集</span
-                                        >
-                                    </span>
-                                    <span class="stat-item">
-                                        <span class="stat-number"
-                                            >模式：{{ collectionMode }}</span
-                                        >
-                                    </span>
-                                </div>
+                        <!-- 可折叠的内容区域 - 向上展开 -->
+                        <div
+                            class="fraction-collector-content"
+                            :class="{ expanded: isFractionCollectorExpanded }"
+                        >
+                            <!-- 操作按钮区域 -->
+                            <div class="rack-actions-panel">
                                 <div class="rack-actions">
                                     <el-button
                                         type="primary"
                                         size="small"
-                                        @click="reverseTubes"
+                                        @click.stop="reverseTubes"
                                         icon="Sort"
                                     >
                                         反转
@@ -213,7 +205,7 @@
                                     <el-button
                                         type="success"
                                         size="small"
-                                        @click="mergeTubes"
+                                        @click.stop="mergeTubes"
                                         icon="Merge"
                                     >
                                         合并
@@ -221,56 +213,92 @@
                                     <el-button
                                         type="warning"
                                         size="small"
-                                        @click="cleanTubes"
+                                        @click.stop="cleanTubes"
                                         icon="Brush"
                                     >
                                         清洗
                                     </el-button>
                                 </div>
                             </div>
-                        </div>
 
-                        <div class="tube-rack">
-                            <div class="rack-grid">
-                                <div
-                                    v-for="tube in tubes"
-                                    :key="tube.id"
-                                    class="tube-slot"
-                                    :class="getTubeClass(tube)"
-                                    @click="selectTube(tube)"
-                                    :title="getTubeTooltip(tube)"
-                                >
-                                    <span class="tube-number">{{
-                                        tube.id
-                                    }}</span>
+                            <!-- 试管架区域 -->
+                            <div class="tube-rack">
+                                <div class="rack-grid">
                                     <div
-                                        v-if="tube.status !== 'empty'"
-                                        class="tube-fill"
-                                        :style="{
-                                            height: `${tube.fillLevel}%`,
-                                        }"
-                                    ></div>
+                                        v-for="tube in tubes"
+                                        :key="tube.id"
+                                        class="tube-slot"
+                                        :class="getTubeClass(tube)"
+                                        @click.stop="selectTube(tube)"
+                                        :title="getTubeTooltip(tube)"
+                                    >
+                                        <span class="tube-number">{{
+                                            tube.id
+                                        }}</span>
+                                        <div
+                                            v-if="tube.status !== 'empty'"
+                                            class="tube-fill"
+                                            :style="{
+                                                height: `${tube.fillLevel}%`,
+                                            }"
+                                        ></div>
+                                    </div>
+                                </div>
+
+                                <!-- 试管状态说明 -->
+                                <div class="tube-legend">
+                                    <div class="legend-item">
+                                        <span class="tube-sample empty"></span>
+                                        <span>空闲</span>
+                                    </div>
+                                    <div class="legend-item">
+                                        <span class="tube-sample ready"></span>
+                                        <span>准备</span>
+                                    </div>
+                                    <div class="legend-item">
+                                        <span
+                                            class="tube-sample collecting"
+                                        ></span>
+                                        <span>收集中</span>
+                                    </div>
+                                    <div class="legend-item">
+                                        <span
+                                            class="tube-sample completed"
+                                        ></span>
+                                        <span>已完成</span>
+                                    </div>
                                 </div>
                             </div>
+                        </div>
 
-                            <!-- 试管状态说明 -->
-                            <div class="tube-legend">
-                                <div class="legend-item">
-                                    <span class="tube-sample empty"></span>
-                                    <span>空闲</span>
+                        <!-- 可点击的头部区域 - 固定在底部 -->
+                        <div
+                            class="fraction-collector-header"
+                            @click="toggleFractionCollector"
+                        >
+                            <div class="header-left">
+                                <h3 class="data-card-title">馏分收集器</h3>
+                                <div class="basic-stats">
+                                    <span class="basic-stat"
+                                        >当前：{{ currentTube }}</span
+                                    >
+                                    <span class="basic-stat"
+                                        >{{ completedTubes }}已收集</span
+                                    >
+                                    <span class="basic-stat"
+                                        >模式：{{ collectionMode }}</span
+                                    >
                                 </div>
-                                <div class="legend-item">
-                                    <span class="tube-sample ready"></span>
-                                    <span>准备</span>
-                                </div>
-                                <div class="legend-item">
-                                    <span class="tube-sample collecting"></span>
-                                    <span>收集中</span>
-                                </div>
-                                <div class="legend-item">
-                                    <span class="tube-sample completed"></span>
-                                    <span>已完成</span>
-                                </div>
+                            </div>
+                            <div class="header-right">
+                                <el-icon
+                                    class="expand-icon"
+                                    :class="{
+                                        expanded: isFractionCollectorExpanded,
+                                    }"
+                                >
+                                    <ArrowDown />
+                                </el-icon>
                             </div>
                         </div>
                     </div>
@@ -883,7 +911,10 @@
                     <div class="error-details" v-if="mqttConnectionError">
                         <details>
                             <summary>查看详细错误信息</summary>
-                            <pre>{{ mqttConnectionError.message || mqttConnectionError }}</pre>
+                            <pre>{{
+                                mqttConnectionError.message ||
+                                mqttConnectionError
+                            }}</pre>
                         </details>
                     </div>
                     <div class="connection-options">
@@ -909,7 +940,7 @@
                         @click="handleMqttReconnect"
                         :loading="mqttReconnecting"
                     >
-                        {{ mqttReconnecting ? '重连中...' : '重新连接' }}
+                        {{ mqttReconnecting ? "重连中..." : "重新连接" }}
                     </el-button>
                 </div>
             </template>
@@ -919,6 +950,7 @@
 
 <script>
 import { ref, onMounted, onUnmounted, nextTick } from "vue";
+import { ArrowDown } from "@element-plus/icons-vue";
 import { useRealtimeChart } from "@/composables/useRealtimeChart.js";
 import { useDeviceStatus } from "@/composables/useDeviceStatus.js";
 import { useTubeRack } from "@/composables/useTubeRack.js";
@@ -928,6 +960,9 @@ import mqttService from "@/services/mqtt-service.js";
 
 export default {
     name: "RealtimeMonitoring",
+    components: {
+        ArrowDown,
+    },
     setup() {
         // 使用各个Hook
         const {
@@ -1034,13 +1069,16 @@ export default {
         // 暂停状态
         const isPaused = ref(false);
 
+        // 馏分收集器展开/折叠状态
+        const isFractionCollectorExpanded = ref(false);
+
         // 任务选择状态
         const selectedTaskIds = ref([]);
 
         // 检测器波长状态
         const wavelengths = ref({
             uv1: 254, // 第一个UV波长，默认254
-            uv2: 280  // 第二个UV波长，默认280
+            uv2: 280, // 第二个UV波长，默认280
         });
 
         // MQTT连接失败弹窗状态
@@ -1051,17 +1089,19 @@ export default {
         // 获取检测器波长的方法
         const fetchWavelengths = async () => {
             try {
-                const response = await fetch('http://0.0.0.0:8008/api/data/device/detector_1/parameter/wavelength');
+                const response = await fetch(
+                    "http://0.0.0.0:8008/api/data/device/detector_1/parameter/wavelength"
+                );
                 if (response.ok) {
                     const data = await response.json();
                     if (data.value && Array.isArray(data.value)) {
                         wavelengths.value.uv1 = data.value[0] || 254;
                         wavelengths.value.uv2 = data.value[1] || 280;
-                        console.log('检测器波长已更新:', wavelengths.value);
+                        console.log("检测器波长已更新:", wavelengths.value);
                     }
                 }
             } catch (error) {
-                console.error('获取检测器波长失败:', error);
+                console.error("获取检测器波长失败:", error);
             }
         };
 
@@ -1084,6 +1124,12 @@ export default {
             stopChart();
             isPaused.value = true;
             deviceEmergencyStop();
+        };
+
+        // 切换馏分收集器展开/折叠状态
+        const toggleFractionCollector = () => {
+            isFractionCollectorExpanded.value =
+                !isFractionCollectorExpanded.value;
         };
 
         // 任务管理方法
@@ -1142,7 +1188,7 @@ export default {
 
         // MQTT连接失败处理方法
         const handleMqttConnectionError = (error) => {
-            console.error('MQTT连接失败:', error);
+            console.error("MQTT连接失败:", error);
             mqttConnectionError.value = error;
             showMqttConnectionDialog.value = true;
         };
@@ -1155,7 +1201,7 @@ export default {
                 showMqttConnectionDialog.value = false;
                 mqttConnectionError.value = null;
             } catch (error) {
-                console.error('MQTT重连失败:', error);
+                console.error("MQTT重连失败:", error);
                 mqttConnectionError.value = error;
             } finally {
                 mqttReconnecting.value = false;
@@ -1166,7 +1212,7 @@ export default {
         const handleMqttCancel = () => {
             showMqttConnectionDialog.value = false;
             mqttConnectionError.value = null;
-            console.log('用户取消MQTT连接');
+            console.log("用户取消MQTT连接");
         };
 
         // 数据更新定时器
@@ -1183,7 +1229,11 @@ export default {
 
             // 监听MQTT连接状态变化
             mqttService.onStatusChange((status) => {
-                if (!status.connected && status.error && !showMqttConnectionDialog.value) {
+                if (
+                    !status.connected &&
+                    status.error &&
+                    !showMqttConnectionDialog.value
+                ) {
                     handleMqttConnectionError(status.error);
                 }
             });
@@ -1232,6 +1282,7 @@ export default {
         return {
             // 状态
             isPaused,
+            isFractionCollectorExpanded,
             wavelengths,
 
             // 设备状态Hook
@@ -1320,6 +1371,7 @@ export default {
             togglePause,
             restartChart,
             emergencyStop,
+            toggleFractionCollector,
 
             // 任务管理
             selectedTaskIds,
@@ -1615,7 +1667,7 @@ export default {
 }
 
 .chart-container {
-    height: 350px;
+    height: 700px;
     width: 100%;
     box-sizing: border-box;
 }
@@ -2740,5 +2792,193 @@ export default {
 .mqtt-connection-dialog .connection-options li {
     margin-bottom: 4px;
     line-height: 1.5;
+}
+
+/* 馏分收集器折叠面板样式 */
+.fraction-collector-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    background: #f8fafc;
+    border-bottom: 1px solid #e1e5e9;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    user-select: none;
+}
+
+.fraction-collector-header:hover {
+    background: #f1f5f9;
+}
+
+.header-left {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex: 1;
+}
+
+.header-left .data-card-title {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: #333;
+}
+
+.basic-stats {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.basic-stat {
+    font-size: 12px;
+    color: #64748b;
+    background: #e2e8f0;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-weight: 500;
+}
+
+.header-right {
+    display: flex;
+    align-items: center;
+}
+
+.expand-icon {
+    font-size: 16px;
+    color: #64748b;
+    transition: transform 0.3s ease;
+    transform: rotate(180deg); /* 默认向上指 */
+}
+
+.expand-icon.expanded {
+    transform: rotate(0deg); /* 展开时向下指 */
+}
+
+/* 可折叠内容区域 - 向上展开 */
+.fraction-collector-content {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.3s ease-out;
+    order: 2;
+    background: #ffffff;
+    border-top: 1px solid #e1e5e9;
+}
+
+.fraction-collector-content.expanded {
+    max-height: 600px;
+    transition: max-height 0.3s ease-in;
+}
+
+/* 馏分收集器容器改为flex布局，头部在下方 */
+.tube-rack-card {
+    display: flex;
+    flex-direction: column-reverse;
+}
+
+/* 操作按钮面板 */
+.rack-actions-panel {
+    padding: 16px 20px;
+    background: #ffffff;
+    border-top: 1px solid #e1e5e9;
+    border-bottom: 1px solid #e1e5e9;
+}
+
+.rack-actions-panel .rack-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    justify-content: center;
+}
+
+/* 图表区域动态高度调整 */
+.chart-container-card {
+    transition: all 0.3s ease;
+}
+
+/* 图表容器高度动态调整 */
+.chart-container-card.expanded-chart .chart-container {
+    height: 700px !important;
+    transition: height 0.3s ease;
+}
+
+.chart-container-card .chart-container {
+    height: 400px;
+    transition: height 0.3s ease;
+}
+
+/* 图表区域高度动态调整 */
+.chart-container-card.expanded-chart .chart-area {
+    height: 587px;
+    transition: height 0.3s ease;
+}
+
+.chart-container-card .chart-area {
+    height: 300px;
+    transition: height 0.3s ease;
+}
+
+/* 响应式适配 */
+@media (max-width: 992px) {
+    .basic-stats {
+        gap: 8px;
+    }
+
+    .basic-stat {
+        font-size: 11px;
+        padding: 1px 6px;
+    }
+
+    .fraction-collector-content.expanded {
+        max-height: 500px;
+    }
+}
+
+@media (max-width: 768px) {
+    .header-left {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+    }
+
+    .basic-stats {
+        gap: 6px;
+        flex-wrap: wrap;
+    }
+
+    .basic-stat {
+        font-size: 10px;
+        padding: 1px 4px;
+    }
+
+    .rack-actions-panel .rack-actions {
+        flex-wrap: wrap;
+        justify-content: center;
+    }
+
+    .fraction-collector-content.expanded {
+        max-height: 450px;
+    }
+}
+
+@media (max-width: 576px) {
+    .fraction-collector-header {
+        padding: 12px 16px;
+    }
+
+    .rack-actions-panel {
+        padding: 12px 16px;
+    }
+
+    .basic-stat {
+        font-size: 9px;
+        padding: 1px 3px;
+    }
+
+    .fraction-collector-content.expanded {
+        max-height: 400px;
+    }
 }
 </style>

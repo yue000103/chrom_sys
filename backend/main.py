@@ -13,6 +13,17 @@ import asyncio
 from datetime import datetime
 import uvicorn
 import logging
+from fastapi import Request
+import time
+
+# 配置日志
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler()
+    ]
+)
 
 from core.mqtt_manager import MQTTManager
 from core.database import DatabaseManager
@@ -130,6 +141,26 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="液相色谱仪控制系统", version="1.0.0", lifespan=lifespan)
 
+# HTTP 请求日志中间件
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    start_time = time.time()
+
+    # 记录请求开始
+    print(f"API Request: {request.method} {request.url}")
+    logger.info(f"API Request: {request.method} {request.url}")
+
+    response = await call_next(request)
+
+    # 计算处理时间
+    process_time = time.time() - start_time
+
+    # 记录请求结束
+    print(f"API Response: {request.method} {request.url.path} - Status: {response.status_code} - Time: {process_time:.4f}s")
+    logger.info(f"API Response: {request.method} {request.url.path} - Status: {response.status_code} - Time: {process_time:.4f}s")
+
+    return response
+
 # CORS 设置
 app.add_middleware(
     CORSMiddleware,
@@ -203,5 +234,6 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=8008,
         reload=True,
-        log_level="info"
+        log_level="info",
+        access_log=True
     )

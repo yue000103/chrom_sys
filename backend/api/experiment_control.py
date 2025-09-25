@@ -156,7 +156,7 @@ async def start_experiment(
             experiment_id=str(experiment_id),
             experiment_name=experiment.get('experiment_name', f'实验_{experiment_id}'),
             method_id=str(experiment.get('method_id', '')),
-            smiles_id=str(experiment.get('smiles_id', '')),
+            sample_id=str(experiment.get('sample_id', '')),
             collection_volume_ml=experiment.get('collection_volume_ml', 2.0),
             created_by=experiment.get('created_by', 'system'),
             description=experiment.get('description', '')
