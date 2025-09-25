@@ -17,22 +17,46 @@
                         isPaused ? "待机" : "采集中"
                     }}</span>
                 </div>
-            </div>
-            <div class="header-controls">
-                <el-button
-                    type="primary"
-                    class="btn-gradient"
-                    @click="togglePause"
-                    :icon="isPaused ? 'VideoPlay' : 'VideoPause'"
-                >
-                    {{ isPaused ? "继续" : "暂停" }}
-                </el-button>
-                <el-button type="success" @click="restartChart" icon="Refresh">
-                    重新开始
-                </el-button>
-                <el-button type="danger" icon="Close" @click="emergencyStop"
-                    >停止</el-button
-                >
+                <div class="status-item peak-info">
+                    <span class="peak-stat-inline">
+                        <span class="stat-label">检测峰数:</span>
+                        <span class="stat-value">{{
+                            detectedPeaks.length
+                        }}</span>
+                    </span>
+                    <span class="peak-stat-inline">
+                        <span class="stat-label">基线:</span>
+                        <span class="stat-value">{{
+                            currentBaseline.toFixed(2)
+                        }}</span>
+                    </span>
+                    <span class="peak-stat-inline">
+                        <el-tag
+                            :type="
+                                peakDetectionStatus === 'active'
+                                    ? 'success'
+                                    : 'info'
+                            "
+                            size="small"
+                        >
+                            {{
+                                peakDetectionStatus === "active"
+                                    ? "检测中"
+                                    : "待机"
+                            }}
+                        </el-tag>
+                    </span>
+                </div>
+                <div class="status-item">
+                    <el-button
+                        type="text"
+                        size="small"
+                        @click="showPeakDialog = true"
+                        class="view-details-btn"
+                    >
+                        查看详情
+                    </el-button>
+                </div>
             </div>
         </div>
 
@@ -105,73 +129,101 @@
                                     ></span>
                                     <span class="legend-text">
                                         <template v-if="series.key === 'uv254'">
-                                            UV{{ wavelengths.uv1 }}：{{
+                                            <span class="legend-label"
+                                                >UV{{ wavelengths.uv1 }}:</span
+                                            >
+                                            <span class="legend-value">{{
                                                 currentValues.uv254.toFixed(5)
-                                            }}
+                                            }}</span>
                                         </template>
                                         <template
                                             v-else-if="series.key === 'uv280'"
                                         >
-                                            UV{{ wavelengths.uv2 }}：{{
+                                            <span class="legend-label"
+                                                >UV{{ wavelengths.uv2 }}:</span
+                                            >
+                                            <span class="legend-value">{{
                                                 currentValues.uv280.toFixed(5)
-                                            }}
+                                            }}</span>
                                         </template>
                                         <template
                                             v-else-if="
                                                 series.key === 'gradient-a'
                                             "
                                         >
-                                            {{ series.label }}：{{
-                                                gradientValues.solutionA
-                                            }}%
+                                            <span class="legend-label"
+                                                >{{ series.label }}:</span
+                                            >
+                                            <span class="legend-value"
+                                                >{{
+                                                    gradientValues?.solutionA ||
+                                                    0
+                                                }}%</span
+                                            >
                                         </template>
                                         <template
                                             v-else-if="
                                                 series.key === 'gradient-b'
                                             "
                                         >
-                                            {{ series.label }}：{{
-                                                gradientValues.solutionB
-                                            }}%
+                                            <span class="legend-label"
+                                                >{{ series.label }}:</span
+                                            >
+                                            <span class="legend-value"
+                                                >{{
+                                                    gradientValues?.solutionB ||
+                                                    0
+                                                }}%</span
+                                            >
                                         </template>
                                         <template
                                             v-else-if="
                                                 series.key === 'gradient-c'
                                             "
                                         >
-                                            {{ series.label }}：{{
-                                                gradientValues.solutionC
-                                            }}%
+                                            <span class="legend-label"
+                                                >{{ series.label }}:</span
+                                            >
+                                            <span class="legend-value"
+                                                >{{
+                                                    gradientValues?.solutionC ||
+                                                    0
+                                                }}%</span
+                                            >
                                         </template>
                                         <template
                                             v-else-if="
                                                 series.key === 'gradient-d'
                                             "
                                         >
-                                            {{ series.label }}：{{
-                                                gradientValues.solutionD
-                                            }}%
+                                            <span class="legend-label"
+                                                >{{ series.label }}:</span
+                                            >
+                                            <span class="legend-value"
+                                                >{{
+                                                    gradientValues?.solutionD ||
+                                                    0
+                                                }}%</span
+                                            >
                                         </template>
                                         <template
                                             v-else-if="
                                                 series.key === 'pressure'
                                             "
                                         >
-                                            {{ series.label }}：{{
+                                            <span class="legend-label"
+                                                >{{ series.label }}:</span
+                                            >
+                                            <span class="legend-value">{{
                                                 currentValues.pressure.toFixed(
                                                     0
                                                 )
-                                            }}
-                                        </template>
-                                        <template
-                                            v-else-if="
-                                                series.key === 'flowRate'
-                                            "
-                                        >
-                                            {{ series.label }}：12.0
+                                            }}</span>
                                         </template>
                                         <template v-else>
-                                            {{ series.label }}
+                                            <span class="legend-label">{{
+                                                series.label
+                                            }}</span>
                                         </template>
                                     </span>
                                 </el-checkbox>
@@ -567,59 +619,146 @@
                 </el-dialog>
             </el-col>
 
-            <!-- 右侧：设备状态和控制面板 -->
+            <!-- 右侧：控制面板和峰信息 -->
             <el-col :span="5">
-                <!-- 峰检测结果卡片 -->
-                <div class="data-card peak-detection-card">
+                <!-- 大按钮控制面板 -->
+                <div class="data-card control-buttons-card">
                     <div class="data-card-header">
-                        <h3 class="data-card-title">峰检测结果</h3>
-                        <div class="peak-controls">
-                            <el-tag
-                                :type="
-                                    peakDetectionStatus === 'active'
-                                        ? 'success'
-                                        : 'info'
-                                "
-                                size="small"
-                            >
-                                {{
-                                    peakDetectionStatus === "active"
-                                        ? "检测中"
-                                        : "待机"
-                                }}
-                            </el-tag>
-                            <el-button
-                                type="primary"
-                                size="small"
-                                @click="showPeakDialog = true"
-                                icon="View"
-                            >
-                                查看详情 ({{ detectedPeaks.length }})
-                            </el-button>
-                        </div>
+                        <h3 class="data-card-title">实时控制</h3>
                     </div>
+                    <div class="control-buttons-grid">
+                        <!-- 开始/暂停/继续按钮 -->
+                        <el-button
+                            v-if="!isRunning"
+                            type="primary"
+                            size="large"
+                            class="control-btn control-btn-primary"
+                            style="margin-left: 12px"
+                            @click="togglePause"
+                        >
+                            <el-icon class="btn-icon"><VideoPlay /></el-icon>
+                            <span class="btn-text">开始</span>
+                        </el-button>
+                        <el-button
+                            v-else-if="isRunning && !isPaused"
+                            type="warning"
+                            size="large"
+                            class="control-btn control-btn-warning"
+                            style="margin-left: 12px"
+                            @click="togglePause"
+                        >
+                            <el-icon class="btn-icon"><VideoPause /></el-icon>
+                            <span class="btn-text">暂停</span>
+                        </el-button>
+                        <el-button
+                            v-else-if="isRunning && isPaused"
+                            type="success"
+                            size="large"
+                            class="control-btn control-btn-success"
+                            style="margin-left: 12px"
+                            @click="togglePause"
+                        >
+                            <el-icon class="btn-icon"><VideoPlay /></el-icon>
+                            <span class="btn-text">继续</span>
+                        </el-button>
 
-                    <div class="peak-summary-compact">
-                        <div class="summary-stats">
-                            <div class="stat-item">
-                                <span class="stat-number">{{
-                                    detectedPeaks.length
-                                }}</span>
-                                <span class="stat-label">已检测峰数</span>
-                            </div>
-                            <div class="stat-item">
-                                <span class="stat-number">{{
-                                    currentBaseline.toFixed(3)
-                                }}</span>
-                                <span class="stat-label">基线 (AU)</span>
-                            </div>
-                            <div class="stat-item">
-                                <span class="stat-number">{{
-                                    noiseLevel.toFixed(3)
-                                }}</span>
-                                <span class="stat-label">噪声 (AU)</span>
-                            </div>
-                        </div>
+                        <!-- 终止按钮 -->
+                        <el-button
+                            type="danger"
+                            size="large"
+                            class="control-btn control-btn-danger"
+                            @click="emergencyStop"
+                        >
+                            <el-icon class="btn-icon"><CircleClose /></el-icon>
+                            <span class="btn-text">终止</span>
+                        </el-button>
+
+                        <!-- 清空按钮 -->
+                        <el-button
+                            type="warning"
+                            size="large"
+                            class="control-btn control-btn-clear"
+                            @click="clearChartData"
+                            plain
+                        >
+                            <el-icon class="btn-icon"><Delete /></el-icon>
+                            <span class="btn-text">清空</span>
+                        </el-button>
+
+                        <!-- 手动保持按钮 -->
+                        <el-button
+                            type="info"
+                            size="large"
+                            class="control-btn control-btn-info"
+                            @click="toggleManualHold"
+                            :class="{ 'is-active': isManualHold }"
+                        >
+                            <el-icon class="btn-icon"><Lock /></el-icon>
+                            <span class="btn-text">{{
+                                isManualHold ? "取消保持" : "手动保持"
+                            }}</span>
+                        </el-button>
+
+                        <!-- 修改洗脱液比例按钮 -->
+                        <el-button
+                            type="primary"
+                            size="large"
+                            class="control-btn control-btn-gradient"
+                            @click="openGradientDialog"
+                            plain
+                        >
+                            <el-icon class="btn-icon"><Setting /></el-icon>
+                            <span class="btn-text">洗脱液比例</span>
+                        </el-button>
+
+                        <!-- 收集模式切换按钮 -->
+                        <el-button
+                            size="large"
+                            class="control-btn control-btn-mode"
+                            :type="
+                                collectionMode === '收集'
+                                    ? 'success'
+                                    : 'warning'
+                            "
+                            @click="toggleCollectionMode"
+                        >
+                            <el-icon class="btn-icon">
+                                <component
+                                    :is="
+                                        collectionMode === '收集'
+                                            ? 'CollectionTag'
+                                            : 'Delete'
+                                    "
+                                />
+                            </el-icon>
+                            <span class="btn-text"
+                                >{{ collectionMode }}模式</span
+                            >
+                        </el-button>
+
+                        <!-- 切换试管按钮 -->
+                        <el-button
+                            type="primary"
+                            size="large"
+                            class="control-btn control-btn-tube"
+                            @click="openTubeSwitchDialog"
+                            plain
+                        >
+                            <el-icon class="btn-icon"><Grid /></el-icon>
+                            <span class="btn-text">切换试管</span>
+                        </el-button>
+
+                        <!-- 润柱按钮 -->
+                        <el-button
+                            type="primary"
+                            size="large"
+                            class="control-btn control-btn-conditioning"
+                            @click="openColumnConditioningDialog"
+                            plain
+                        >
+                            <el-icon class="btn-icon"><Refresh /></el-icon>
+                            <span class="btn-text">润柱</span>
+                        </el-button>
                     </div>
                 </div>
 
@@ -780,111 +919,227 @@
                     </template>
                 </el-dialog>
 
-                <!-- 实时控制面板 -->
-                <el-card class="control-panel-card">
-                    <template #header>
-                        <span>实时控制</span>
-                    </template>
-
-                    <div class="control-panel">
-                        <!-- 试管控制 -->
-                        <div class="control-section">
-                            <h4>试管控制</h4>
-                            <div class="control-row">
-                                <el-select
-                                    v-model="selectedTubeForSwitch"
-                                    placeholder="选择试管"
-                                >
-                                    <el-option
-                                        v-for="tube in availableTubes"
-                                        :key="tube"
-                                        :label="`试管 ${tube}`"
-                                        :value="tube"
-                                    />
-                                </el-select>
-                                <el-button
-                                    @click="switchToTube"
-                                    :disabled="!selectedTubeForSwitch"
-                                >
-                                    切换
-                                </el-button>
-                            </div>
-                        </div>
-
-                        <!-- 收集模式控制 -->
-                        <div class="control-section">
-                            <h4>收集模式</h4>
-                            <el-radio-group
-                                v-model="collectionMode"
-                                @change="changeCollectionMode"
+                <!-- 洗脱液比例调整弹窗 -->
+                <el-dialog
+                    v-model="showGradientDialog"
+                    title="调整洗脱液比例"
+                    width="500px"
+                >
+                    <div class="gradient-dialog-content">
+                        <div class="gradient-item">
+                            <label>执行时间:</label>
+                            <el-select
+                                v-model="selectedGradientTime"
+                                placeholder="选择时间"
+                                style="width: 200px"
                             >
-                                <el-radio label="收集">收集模式</el-radio>
-                                <el-radio label="废液">废液模式</el-radio>
-                            </el-radio-group>
+                                <el-option
+                                    v-for="time in availableGradientTimes"
+                                    :key="time.value"
+                                    :label="time.label"
+                                    :value="time.value"
+                                />
+                            </el-select>
+                        </div>
+                        <div class="gradient-item">
+                            <label>原液A:</label>
+                            <el-slider
+                                v-model="gradientValues.solutionA"
+                                :max="100"
+                                style="flex: 1; margin: 0 15px"
+                            />
+                            <span class="gradient-value"
+                                >{{ gradientValues.solutionA }}%</span
+                            >
+                        </div>
+                        <div class="gradient-item">
+                            <label>原液B:</label>
+                            <el-slider
+                                v-model="gradientValues.solutionB"
+                                :max="100"
+                                style="flex: 1; margin: 0 15px"
+                            />
+                            <span class="gradient-value"
+                                >{{ gradientValues.solutionB }}%</span
+                            >
+                        </div>
+                        <div class="gradient-item">
+                            <label>原液C:</label>
+                            <el-slider
+                                v-model="gradientValues.solutionC"
+                                :max="100"
+                                style="flex: 1; margin: 0 15px"
+                            />
+                            <span class="gradient-value"
+                                >{{ gradientValues.solutionC }}%</span
+                            >
+                        </div>
+                        <div class="gradient-item">
+                            <label>原液D:</label>
+                            <el-slider
+                                v-model="gradientValues.solutionD"
+                                :max="100"
+                                style="flex: 1; margin: 0 15px"
+                            />
+                            <span class="gradient-value"
+                                >{{ gradientValues.solutionD }}%</span
+                            >
+                        </div>
+                    </div>
+                    <template #footer>
+                        <div class="dialog-footer">
+                            <el-button @click="cancelGradientChange"
+                                >取消</el-button
+                            >
+                            <el-button
+                                type="primary"
+                                @click="applyGradientChangeWrapper"
+                            >
+                                应用更改 {{ selectedGradientTime ? "✓" : "❌" }}
+                            </el-button>
+                        </div>
+                    </template>
+                </el-dialog>
+
+                <!-- 切换试管弹窗 -->
+                <el-dialog
+                    v-model="showTubeDialog"
+                    title="切换试管"
+                    width="400px"
+                >
+                    <div class="tube-dialog-content">
+                        <div class="current-tube-info">
+                            <p>
+                                当前试管：<strong
+                                    >试管 {{ currentTube }}</strong
+                                >
+                            </p>
+                        </div>
+                        <el-divider />
+                        <div class="tube-selection">
+                            <label>选择试管：</label>
+                            <el-select
+                                v-model="selectedTubeForSwitch"
+                                placeholder="选择试管"
+                                style="width: 200px"
+                            >
+                                <el-option
+                                    v-for="tube in availableTubes"
+                                    :key="tube"
+                                    :label="`试管 ${tube}`"
+                                    :value="tube"
+                                />
+                            </el-select>
+                        </div>
+                    </div>
+                    <template #footer>
+                        <div class="dialog-footer">
+                            <el-button @click="showTubeDialog = false"
+                                >取消</el-button
+                            >
+                            <el-button
+                                type="primary"
+                                @click="switchToTubeWrapper"
+                                :disabled="
+                                    !selectedTubeForSwitch ||
+                                    selectedTubeForSwitch === currentTube
+                                "
+                            >
+                                切换
+                            </el-button>
+                        </div>
+                    </template>
+                </el-dialog>
+
+                <!-- 润柱弹窗 -->
+                <el-dialog
+                    v-model="showColumnConditioningDialog"
+                    title="润柱设置"
+                    width="400px"
+                >
+                    <div class="conditioning-dialog-content">
+                        <div class="conditioning-info">
+                            <el-alert
+                                title="润柱说明"
+                                type="info"
+                                description="润柱过程将清洗色谱柱并平衡系统，建议在实验前或长期停机后进行。"
+                                show-icon
+                                :closable="false"
+                            />
                         </div>
 
-                        <!-- 梯度调整 -->
-                        <div class="control-section">
-                            <h4>梯度调整</h4>
-                            <div class="gradient-controls">
-                                <div class="gradient-item">
-                                    <label>执行时间:</label>
+                        <el-divider />
+
+                        <div class="conditioning-settings">
+                            <el-form label-width="100px">
+                                <el-form-item label="润柱时间">
+                                    <el-input-number
+                                        v-model="conditioningTime"
+                                        :min="1"
+                                        :max="60"
+                                        placeholder="请输入润柱时间"
+                                        style="width: 200px"
+                                    />
+                                    <span style="margin-left: 10px; color: #666;">分钟</span>
+                                </el-form-item>
+
+                                <el-form-item label="润柱溶液">
                                     <el-select
-                                        v-model="selectedGradientTime"
-                                        placeholder="选择时间"
-                                        size="small"
-                                        style="flex: 1"
+                                        v-model="conditioningSolution"
+                                        placeholder="选择润柱溶液"
+                                        style="width: 200px"
                                     >
-                                        <el-option
-                                            v-for="time in availableGradientTimes"
-                                            :key="time.value"
-                                            :label="time.label"
-                                            :value="time.value"
-                                        />
+                                        <el-option label="溶液A (100%)" value="A" />
+                                        <el-option label="溶液B (100%)" value="B" />
+                                        <el-option label="溶液A/B (50:50)" value="AB" />
                                     </el-select>
-                                </div>
-                                <div class="gradient-item">
-                                    <label>原液A:</label>
-                                    <el-slider
-                                        v-model="gradientValues.solutionA"
-                                        :max="100"
-                                    />
-                                    <span>{{ gradientValues.solutionA }}%</span>
-                                </div>
-                                <div class="gradient-item">
-                                    <label>原液B:</label>
-                                    <el-slider
-                                        v-model="gradientValues.solutionB"
-                                        :max="100"
-                                    />
-                                    <span>{{ gradientValues.solutionB }}%</span>
-                                </div>
-                                <div class="gradient-item">
-                                    <label>原液C:</label>
-                                    <el-slider
-                                        v-model="gradientValues.solutionC"
-                                        :max="100"
-                                    />
-                                    <span>{{ gradientValues.solutionC }}%</span>
-                                </div>
-                                <div class="gradient-item">
-                                    <label>原液D:</label>
-                                    <el-slider
-                                        v-model="gradientValues.solutionD"
-                                        :max="100"
-                                    />
-                                    <span>{{ gradientValues.solutionD }}%</span>
-                                </div>
-                                <el-button
-                                    type="primary"
-                                    @click="applyGradientChange"
-                                    :disabled="!selectedGradientTime"
-                                    >确定</el-button
-                                >
+                                </el-form-item>
+                            </el-form>
+                        </div>
+
+                        <div v-if="isColumnConditioning" class="conditioning-status">
+                            <el-divider />
+                            <div class="status-info">
+                                <el-tag type="success" size="large">
+                                    <el-icon><Timer /></el-icon>
+                                    润柱进行中...
+                                </el-tag>
+                                <p style="margin-top: 10px; color: #666;">
+                                    剩余时间: {{ remainingConditioningTime }} 分钟
+                                </p>
+                                <p style="color: #666;">
+                                    当前信号值: {{ currentSignalValue.toFixed(3) }} AU
+                                </p>
                             </div>
                         </div>
                     </div>
-                </el-card>
+
+                    <template #footer>
+                        <div class="dialog-footer">
+                            <el-button
+                                @click="showColumnConditioningDialog = false"
+                                :disabled="isColumnConditioning"
+                            >
+                                取消
+                            </el-button>
+                            <el-button
+                                v-if="!isColumnConditioning"
+                                type="primary"
+                                @click="startColumnConditioning"
+                                :disabled="!conditioningTime || !conditioningSolution"
+                            >
+                                开始润柱
+                            </el-button>
+                            <el-button
+                                v-else
+                                type="danger"
+                                @click="stopColumnConditioning"
+                            >
+                                停止润柱
+                            </el-button>
+                        </div>
+                    </template>
+                </el-dialog>
             </el-col>
         </el-row>
 
@@ -950,7 +1205,8 @@
 
 <script>
 import { ref, onMounted, onUnmounted, nextTick } from "vue";
-import { ArrowDown } from "@element-plus/icons-vue";
+import { ArrowDown, Delete, Refresh, Timer } from "@element-plus/icons-vue";
+import { ElMessage, ElMessageBox } from "element-plus";
 import { useRealtimeChart } from "@/composables/useRealtimeChart.js";
 import { useDeviceStatus } from "@/composables/useDeviceStatus.js";
 import { useTubeRack } from "@/composables/useTubeRack.js";
@@ -997,11 +1253,37 @@ export default {
             updateTimeRange,
             resetZoom,
             exportChart,
+            clearChartCache,
+            clearAndRestartChart,
+            clearChartDataOnly,
         } = useRealtimeChart(currentValues);
 
         // 包装restartChart方法，在重新开始时获取波长
         const restartChart = async () => {
             await originalRestartChart(fetchWavelengths);
+        };
+
+        // 清空图表数据
+        const clearChartData = async () => {
+            try {
+                await ElMessageBox.confirm(
+                    "清空操作将删除所有历史数据，是否继续？",
+                    "确认清空",
+                    {
+                        confirmButtonText: "确定",
+                        cancelButtonText: "取消",
+                        type: "warning",
+                    }
+                );
+
+                clearChartDataOnly();
+                ElMessage.success("图表数据已清空");
+            } catch (error) {
+                if (error !== "cancel") {
+                    console.error("清空图表数据失败:", error);
+                    ElMessage.error("清空图表数据失败");
+                }
+            }
         };
 
         const {
@@ -1086,6 +1368,20 @@ export default {
         const mqttConnectionError = ref(null);
         const mqttReconnecting = ref(false);
 
+        // 新增控制面板状态
+        const showGradientDialog = ref(false);
+        const showTubeDialog = ref(false);
+        const isManualHold = ref(false);
+
+        // 润柱相关状态
+        const showColumnConditioningDialog = ref(false);
+        const isColumnConditioning = ref(false);
+        const conditioningTime = ref(10);
+        const conditioningSolution = ref('A');
+        const remainingConditioningTime = ref(0);
+        const currentSignalValue = ref(0);
+        let conditioningInterval = null;
+
         // 获取检测器波长的方法
         const fetchWavelengths = async () => {
             try {
@@ -1107,24 +1403,27 @@ export default {
 
         // 主要控制方法
         const togglePause = () => {
-            isPaused.value = !isPaused.value;
-
-            if (isPaused.value) {
-                stopChart();
-                console.log("图表已暂停");
-            } else {
+            if (!isRunning.value) {
+                // 如果图表未运行，则开始
                 startChart();
-                console.log("图表继续运行");
+                isPaused.value = false;
+                console.log("实验已开始");
+                ElMessage.success("实验已开始");
+            } else if (!isPaused.value) {
+                // 如果图表正在运行且未暂停，则暂停（但保持 isRunning 为 true）
+                // 这里不调用 stopChart()，而是暂停数据更新
+                isPaused.value = true;
+                console.log("实验已暂停");
+                ElMessage.info("实验已暂停");
+            } else {
+                // 如果图表已暂停，则继续
+                isPaused.value = false;
+                console.log("实验已继续");
+                ElMessage.success("实验已继续");
             }
         };
 
-        // 紧急停止
-        const emergencyStop = () => {
-            console.log("紧急停止");
-            stopChart();
-            isPaused.value = true;
-            deviceEmergencyStop();
-        };
+        // 紧急停止（使用下面更完整的定义，包含确认对话框）
 
         // 切换馏分收集器展开/折叠状态
         const toggleFractionCollector = () => {
@@ -1208,11 +1507,249 @@ export default {
             }
         };
 
+        // 润柱相关功能
+        const openColumnConditioningDialog = () => {
+            showColumnConditioningDialog.value = true;
+        };
+
+        const startColumnConditioning = async () => {
+            try {
+                console.log(`开始润柱: 时间=${conditioningTime.value}分钟, 溶液=${conditioningSolution.value}`);
+
+                isColumnConditioning.value = true;
+                remainingConditioningTime.value = conditioningTime.value;
+
+                // 模拟向后端发送润柱开始指令
+                const conditioningData = {
+                    duration: conditioningTime.value,
+                    solution: conditioningSolution.value,
+                    timestamp: new Date().toISOString()
+                };
+
+                // 这里可以调用实际的API接口
+                // await deviceApi.startColumnConditioning(conditioningData);
+
+                ElMessage.success(`润柱已开始，预计${conditioningTime.value}分钟完成`);
+
+                // 开始倒计时和信号值模拟
+                conditioningInterval = setInterval(() => {
+                    remainingConditioningTime.value -= 0.1;
+
+                    // 模拟信号值变化 (实际应从MQTT获取)
+                    currentSignalValue.value = Math.random() * 0.5 + Math.sin(Date.now() / 1000) * 0.1;
+
+                    if (remainingConditioningTime.value <= 0) {
+                        stopColumnConditioning();
+                    }
+                }, 6000); // 每6秒减少0.1分钟 (实际1分钟为10倍速)
+
+            } catch (error) {
+                console.error("启动润柱失败:", error);
+                ElMessage.error("启动润柱失败");
+            }
+        };
+
+        const stopColumnConditioning = () => {
+            try {
+                console.log("停止润柱");
+
+                if (conditioningInterval) {
+                    clearInterval(conditioningInterval);
+                    conditioningInterval = null;
+                }
+
+                isColumnConditioning.value = false;
+                remainingConditioningTime.value = 0;
+                showColumnConditioningDialog.value = false;
+
+                // 模拟向后端发送停止指令
+                // await deviceApi.stopColumnConditioning();
+
+                ElMessage.info("润柱已停止");
+
+            } catch (error) {
+                console.error("停止润柱失败:", error);
+                ElMessage.error("停止润柱失败");
+            }
+        };
+
         // 用户选择取消MQTT连接
         const handleMqttCancel = () => {
             showMqttConnectionDialog.value = false;
             mqttConnectionError.value = null;
             console.log("用户取消MQTT连接");
+        };
+
+        // 新增控制面板方法（togglePause已在上面定义，这里删除重复定义）
+
+        const emergencyStop = () => {
+            ElMessageBox.confirm(
+                "确定要终止实验吗？此操作不可撤销。",
+                "确认终止",
+                {
+                    confirmButtonText: "确定",
+                    cancelButtonText: "取消",
+                    type: "warning",
+                }
+            )
+                .then(() => {
+                    // 停止图表并重置状态
+                    stopChart();
+                    deviceEmergencyStop();
+
+                    // 重置为初始状态，以便显示"开始"按钮
+                    isPaused.value = false;
+                    // isRunning 会被 stopChart() 自动设置为 false
+
+                    console.log("实验已终止");
+                    ElMessage.warning("实验已终止");
+                })
+                .catch(() => {
+                    console.log("取消终止操作");
+                });
+        };
+
+        // 手动保持 - 不影响开始按钮状态
+        const toggleManualHold = () => {
+            isManualHold.value = !isManualHold.value;
+            console.log(
+                isManualHold.value ? "已开启手动保持" : "已取消手动保持"
+            );
+            ElMessage.info(
+                isManualHold.value ? "已开启手动保持模式" : "已取消手动保持模式"
+            );
+        };
+
+        // 收集模式切换 - 不影响开始按钮状态
+        const toggleCollectionMode = () => {
+            const newMode = collectionMode.value === "收集" ? "废液" : "收集";
+            changeCollectionMode(newMode);
+            console.log(`已切换到${newMode}模式`);
+            ElMessage.success(`已切换到${newMode}模式`);
+        };
+
+        // 记录洗脱比例修改前的状态
+        const gradientModificationState = ref({
+            wasRunningBeforeModification: false,
+            wasModifying: false,
+        });
+
+        // 打开洗脱比例弹窗 - 如果实验正在运行，先暂停
+        const openGradientDialog = () => {
+            gradientModificationState.value.wasRunningBeforeModification =
+                isRunning.value && !isPaused.value;
+            gradientModificationState.value.wasModifying = true;
+
+            if (gradientModificationState.value.wasRunningBeforeModification) {
+                // 如果正在运行，先暂停（不调用stopChart，保持isRunning状态）
+                isPaused.value = true;
+                console.log("为修改洗脱比例暂停实验");
+                ElMessage.info("已暂停实验，可修改洗脱液比例");
+            }
+
+            showGradientDialog.value = true;
+        };
+
+        // 应用洗脱比例修改 - 相当于继续
+        const applyGradientChangeWrapper = () => {
+            console.log("应用洗脱液比例修改被点击", selectedGradientTime.value);
+            const success = applyGradientChange();
+
+            // 只有成功应用了梯度变更才关闭对话框
+            if (success) {
+                showGradientDialog.value = false;
+
+                if (
+                    gradientModificationState.value.wasRunningBeforeModification
+                ) {
+                    // 如果修改前是运行状态，现在继续（不需要调用startChart，isRunning已经是true）
+                    isPaused.value = false;
+                    console.log("应用洗脱比例修改，继续实验");
+                    ElMessage.success("洗脱液比例已更新，实验继续");
+                } else {
+                    console.log("应用洗脱比例修改，实验未运行状态不变");
+                    ElMessage.success("洗脱液比例已更新");
+                }
+
+                // 重置状态
+                gradientModificationState.value.wasRunningBeforeModification = false;
+                gradientModificationState.value.wasModifying = false;
+            } else {
+                // 如果应用失败，显示错误信息但不关闭对话框
+                ElMessage.error("请完善梯度设置后再应用");
+            }
+        };
+
+        // 取消洗脱比例修改
+        const cancelGradientChange = () => {
+            if (gradientModificationState.value.wasRunningBeforeModification) {
+                // 如果修改前是运行状态，现在继续（不需要调用startChart，isRunning已经是true）
+                isPaused.value = false;
+                console.log("取消洗脱比例修改，继续实验");
+                ElMessage.info("已取消修改，实验继续");
+            }
+
+            showGradientDialog.value = false;
+            // 重置状态
+            gradientModificationState.value.wasRunningBeforeModification = false;
+            gradientModificationState.value.wasModifying = false;
+        };
+
+        // 切换试管 - 不影响开始按钮状态
+        const switchToTubeWrapper = () => {
+            // 验证是否选择了试管且不是当前试管
+            if (!selectedTubeForSwitch.value) {
+                ElMessage.error("请选择要切换的试管");
+                return;
+            }
+
+            if (selectedTubeForSwitch.value === currentTube.value) {
+                ElMessage.error("不能切换到当前试管");
+                return;
+            }
+
+            try {
+                switchToTube();
+                showTubeDialog.value = false;
+                ElMessage.success(
+                    `已切换到试管 ${selectedTubeForSwitch.value}`
+                );
+            } catch (error) {
+                console.error("切换试管失败:", error);
+                ElMessage.error("切换试管失败，请重试");
+            }
+        };
+
+        // 打开试管切换对话框，并自动选择下一个试管
+        const openTubeSwitchDialog = () => {
+            // 获取当前试管号
+            const currentTubeNumber = parseInt(currentTube.value);
+
+            // 找到下一个可用试管
+            const nextTube = availableTubes.value.find(
+                (tube) => parseInt(tube) > currentTubeNumber
+            );
+
+            // 如果没有找到更大的试管号，选择第一个可用试管（循环）
+            const defaultSelectedTube = nextTube || availableTubes.value[0];
+
+            // 设置默认选择的试管
+            if (
+                defaultSelectedTube &&
+                defaultSelectedTube !== currentTube.value
+            ) {
+                selectedTubeForSwitch.value = defaultSelectedTube;
+            } else {
+                // 如果没有其他可用试管，清空选择
+                selectedTubeForSwitch.value = null;
+            }
+
+            // 显示对话框
+            showTubeDialog.value = true;
+
+            console.log(
+                `当前试管: ${currentTube.value}, 默认选择: ${selectedTubeForSwitch.value}`
+            );
         };
 
         // 数据更新定时器
@@ -1303,6 +1840,7 @@ export default {
             chartSeries,
             detectors,
             runningTime,
+            isRunning,
             toggleSeries,
             switchDetector,
             updateTimeRange,
@@ -1364,12 +1902,13 @@ export default {
             availableGradientTimes,
             gradientSum,
             isGradientValid,
-            applyGradientChange,
+            applyGradientChange: applyGradientChangeWrapper,
             resetGradientValues,
 
             // 主要控制方法
             togglePause,
             restartChart,
+            clearChartData,
             emergencyStop,
             toggleFractionCollector,
 
@@ -1383,6 +1922,29 @@ export default {
             getTaskStatusType,
             getTaskStatusText,
             getProgressColor,
+
+            // 新增控制面板
+            showGradientDialog,
+            showTubeDialog,
+            isManualHold,
+            gradientModificationState,
+
+            // 润柱相关
+            showColumnConditioningDialog,
+            isColumnConditioning,
+            conditioningTime,
+            conditioningSolution,
+            remainingConditioningTime,
+            currentSignalValue,
+            toggleManualHold,
+            toggleCollectionMode,
+            openGradientDialog,
+            cancelGradientChange,
+            openTubeSwitchDialog,
+            switchToTube: switchToTubeWrapper,
+            openColumnConditioningDialog,
+            startColumnConditioning,
+            stopColumnConditioning,
 
             // MQTT连接失败处理
             showMqttConnectionDialog,
@@ -1441,6 +2003,27 @@ export default {
     font-weight: 500;
 }
 
+.status-item.peak-info {
+    gap: 12px;
+}
+
+.peak-stat-inline {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 13px;
+}
+
+.peak-stat-inline .stat-label {
+    color: #666;
+    font-weight: normal;
+}
+
+.peak-stat-inline .stat-value {
+    font-weight: 600;
+    color: #1e293b;
+}
+
 .status-indicator {
     width: 8px;
     height: 8px;
@@ -1459,13 +2042,6 @@ export default {
 
 .status-text {
     color: #333;
-}
-
-.header-controls {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    flex-shrink: 0;
 }
 
 @keyframes pulse {
@@ -1596,27 +2172,55 @@ export default {
 .legend-checkboxes {
     display: flex;
     align-items: center;
-    gap: 24px;
-    flex-wrap: wrap;
+    gap: 8px; /* 减少间距以适应更多选项 */
+    flex-wrap: nowrap; /* 强制在一行显示 */
+    overflow-x: auto; /* 如果内容过长，允许水平滚动 */
+    overflow-y: hidden;
+    padding: 2px 0; /* 为滚动条留出空间 */
+    scrollbar-width: thin; /* Firefox */
+    scrollbar-color: #cbd5e1 transparent; /* Firefox */
+}
+
+/* 自定义滚动条样式 */
+.legend-checkboxes::-webkit-scrollbar {
+    height: 4px;
+}
+
+.legend-checkboxes::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.legend-checkboxes::-webkit-scrollbar-thumb {
+    background-color: #cbd5e1;
+    border-radius: 2px;
+}
+
+.legend-checkboxes::-webkit-scrollbar-thumb:hover {
+    background-color: #94a3b8;
 }
 
 .legend-checkbox {
     display: flex;
     align-items: center;
     margin-right: 0 !important;
+    flex-shrink: 0; /* 防止收缩 */
+    white-space: nowrap; /* 防止内容换行 */
 }
 
 .legend-checkbox .el-checkbox__input {
     margin-right: 8px;
+    flex-shrink: 0; /* 防止收缩 */
 }
 
 .legend-checkbox .el-checkbox__label {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 4px; /* 减少间距 */
     padding-left: 0;
     font-size: 13px;
     color: #333;
+    flex-shrink: 0; /* 防止label收缩 */
+    white-space: nowrap; /* 防止换行 */
 }
 
 .legend-color {
@@ -1624,7 +2228,7 @@ export default {
     height: 12px;
     border-radius: 2px;
     display: inline-block;
-    flex-shrink: 0;
+    flex-shrink: 0; /* 防止收缩 */
 }
 
 .legend-color.uv254 {
@@ -1647,13 +2251,90 @@ export default {
     background-color: #e6a23c;
 }
 
-.legend-color.flowRate {
-    background-color: #8b5cf6;
-}
-
 .legend-text {
     font-weight: 500;
     user-select: none;
+    display: inline-flex;
+    align-items: center;
+    white-space: nowrap; /* 防止换行 */
+    gap: 2px; /* 标签和数值之间的小间距 */
+}
+
+/* 为数值部分添加固定宽度 */
+.legend-text .legend-label {
+    flex-shrink: 0;
+}
+
+.legend-text .legend-value {
+    display: inline-block;
+    text-align: right;
+    min-width: 45px; /* 固定数值显示区域宽度 */
+    font-family: "Monaco", "Menlo", "Ubuntu Mono", "Consolas", monospace; /* 等宽字体 */
+    color: #666; /* 稍微区分数值的颜色 */
+    flex-shrink: 0;
+}
+
+/* 响应式调整图例选项 */
+@media (max-width: 1200px) {
+    .legend-checkboxes {
+        gap: 6px;
+    }
+
+    .legend-checkbox .el-checkbox__label {
+        font-size: 12px;
+    }
+
+    .legend-text .legend-value {
+        min-width: 40px;
+        font-size: 12px;
+    }
+}
+
+@media (max-width: 992px) {
+    .legend-checkboxes {
+        gap: 4px;
+    }
+
+    .legend-checkbox .el-checkbox__label {
+        font-size: 11px;
+        gap: 3px;
+    }
+
+    .legend-text .legend-value {
+        min-width: 35px;
+        font-size: 11px;
+    }
+
+    .legend-color {
+        width: 10px;
+        height: 10px;
+    }
+}
+
+@media (max-width: 768px) {
+    .legend-checkboxes {
+        gap: 2px;
+        font-size: 10px;
+    }
+
+    .legend-checkbox .el-checkbox__label {
+        font-size: 10px;
+        gap: 2px;
+    }
+
+    .legend-text .legend-value {
+        min-width: 30px;
+        font-size: 10px;
+    }
+
+    .legend-color {
+        width: 8px;
+        height: 8px;
+    }
+
+    .legend-checkbox .el-checkbox__input {
+        margin-right: 4px;
+    }
 }
 
 .card-header {
@@ -1807,10 +2488,6 @@ export default {
     filter: drop-shadow(0 1px 1px rgba(144, 147, 153, 0.3));
 }
 
-.chromatogram-chart .flowRate-line {
-    filter: drop-shadow(0 1px 2px rgba(139, 92, 246, 0.3));
-}
-
 .chart-placeholder {
     text-align: center;
     color: #909399;
@@ -1962,7 +2639,7 @@ export default {
 }
 
 .rack-stats .stat-label {
-    font-size: 12px;
+    font-size: 16px;
     color: #64748b;
     font-weight: 500;
     text-align: center;
@@ -2527,7 +3204,7 @@ export default {
 }
 
 .stat-label {
-    font-size: 12px;
+    font-size: 15px;
     color: #64748b;
     font-weight: 500;
     text-align: center;
@@ -2979,6 +3656,278 @@ export default {
 
     .fraction-collector-content.expanded {
         max-height: 400px;
+    }
+}
+
+/* 新增大按钮控制面板样式 */
+.peak-overview-card {
+    margin-bottom: 16px;
+}
+
+.peak-overview-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.view-details-btn {
+    color: #409eff;
+    text-decoration: none;
+}
+
+.view-details-btn:hover {
+    color: #337ecc;
+}
+
+.peak-overview-content {
+    padding: 8px 0;
+}
+
+.peak-stats-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+}
+
+.peak-stat {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+}
+
+.peak-stat .stat-value {
+    font-size: 16px;
+    font-weight: 600;
+    color: #1e293b;
+}
+
+.peak-stat .stat-label {
+    font-size: 11px;
+    color: #64748b;
+    text-align: center;
+}
+
+/* 控制按钮卡片 */
+.control-buttons-card {
+    margin-top: 16px;
+}
+
+.control-buttons-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 8px 0;
+}
+
+.control-btn {
+    min-height: 60px !important;
+    width: 90% !important;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    font-weight: 600 !important;
+    border-radius: 8px !important;
+    border: 2px solid !important;
+    transition: all 0.3s ease !important;
+    position: relative;
+    overflow: hidden;
+}
+
+.control-btn .btn-icon {
+    font-size: 20px !important;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.control-btn .btn-text {
+    font-size: 12px;
+    line-height: 1.2;
+    text-align: center;
+    white-space: nowrap;
+}
+
+/* 按钮特定样式 */
+.control-btn-primary {
+    background: linear-gradient(135deg, #409eff 0%, #337ecc 100%) !important;
+    border-color: #409eff !important;
+    color: white !important;
+}
+
+.control-btn-primary:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(64, 158, 255, 0.3) !important;
+}
+
+.control-btn-warning {
+    background: linear-gradient(135deg, #e6a23c 0%, #cf9236 100%) !important;
+    border-color: #e6a23c !important;
+    color: white !important;
+}
+
+.control-btn-warning:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(230, 162, 60, 0.3) !important;
+}
+
+.control-btn-success {
+    background: linear-gradient(135deg, #67c23a 0%, #5daf34 100%) !important;
+    border-color: #67c23a !important;
+    color: white !important;
+}
+
+.control-btn-success:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(103, 194, 58, 0.3) !important;
+}
+
+.control-btn-danger {
+    background: linear-gradient(135deg, #f56c6c 0%, #f04142 100%) !important;
+    border-color: #f56c6c !important;
+    color: white !important;
+}
+
+.control-btn-danger:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(245, 108, 108, 0.3) !important;
+}
+
+.control-btn-info {
+    background: linear-gradient(135deg, #909399 0%, #82848a 100%) !important;
+    border-color: #909399 !important;
+    color: white !important;
+}
+
+.control-btn-info:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(144, 147, 153, 0.3) !important;
+}
+
+.control-btn-info.is-active {
+    background: linear-gradient(135deg, #67c23a 0%, #5daf34 100%) !important;
+    border-color: #67c23a !important;
+}
+
+.control-btn-gradient,
+.control-btn-tube,
+.control-btn-conditioning {
+    background: white !important;
+    border-color: #409eff !important;
+    color: #409eff !important;
+}
+
+.control-btn-gradient:hover,
+.control-btn-tube:hover,
+.control-btn-conditioning:hover {
+    background: #409eff !important;
+    color: white !important;
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(64, 158, 255, 0.2) !important;
+}
+
+.control-btn-clear {
+    background: white !important;
+    border-color: #e6a23c !important;
+    color: #e6a23c !important;
+}
+
+.control-btn-clear:hover {
+    background: #e6a23c !important;
+    color: white !important;
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(230, 162, 60, 0.2) !important;
+}
+
+.control-btn-mode {
+    transition: all 0.3s ease !important;
+}
+
+.control-btn-mode:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15) !important;
+}
+
+/* 弹窗内容样式 */
+.gradient-dialog-content {
+    padding: 16px 0;
+}
+
+.gradient-item {
+    display: flex;
+    align-items: center;
+    margin-bottom: 20px;
+    gap: 12px;
+}
+
+.gradient-item label {
+    min-width: 60px;
+    font-weight: 500;
+    color: #606266;
+}
+
+.gradient-value {
+    min-width: 45px;
+    text-align: center;
+    font-weight: 600;
+    color: #409eff;
+}
+
+.tube-dialog-content {
+    padding: 16px 0;
+}
+
+.current-tube-info {
+    text-align: center;
+    margin-bottom: 16px;
+}
+
+.tube-selection {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+}
+
+.tube-selection label {
+    font-weight: 500;
+    color: #606266;
+}
+
+/* 响应式适配 */
+@media (max-width: 1200px) {
+    .control-btn {
+        min-height: 55px !important;
+    }
+
+    .control-btn .btn-icon {
+        font-size: 18px !important;
+    }
+
+    .control-btn .btn-text {
+        font-size: 11px;
+    }
+}
+
+@media (max-width: 992px) {
+    .control-buttons-grid {
+        gap: 8px;
+    }
+
+    .control-btn {
+        min-height: 50px !important;
+    }
+
+    .control-btn .btn-icon {
+        font-size: 16px !important;
+    }
+
+    .control-btn .btn-text {
+        font-size: 10px;
     }
 }
 </style>

@@ -3,7 +3,12 @@
     "allow": [
       "Bash(python:*)",
       "Bash(curl:*)",
-      "Bash(sqlite3:*)"
+      "Bash(sqlite3:*)",
+      "Bash(python3:*)",
+      "Read(//d/back/chrom_ai/硬件接口文档/collect/**)",
+      "Read(//d/back/chrom_ai/硬件接口文档/host/**)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
     ],
     "deny": [],
     "ask": []

@@ -447,6 +447,60 @@
                             </div>
                         </div>
 
+                        <!-- 实验步骤流程图 -->
+                        <div
+                            v-if="
+                                selectedExperiment && experimentSteps.length > 0
+                            "
+                            class="experiment-steps-flowchart"
+                        >
+                            <h4 class="flowchart-title">实验流程</h4>
+                            <div class="steps-container">
+                                <div
+                                    v-for="(step, index) in experimentSteps"
+                                    :key="step"
+                                    class="step-item"
+                                    :class="{
+                                        active: currentStepIndex === index,
+                                        completed: index < currentStepIndex,
+                                    }"
+                                >
+                                    <div class="step-icon">
+                                        <el-icon v-if="index < currentStepIndex"
+                                            ><Check
+                                        /></el-icon>
+                                        <el-icon
+                                            v-else-if="
+                                                currentStepIndex === index
+                                            "
+                                            ><Timer
+                                        /></el-icon>
+                                        <span v-else>{{ index + 1 }}</span>
+                                    </div>
+                                    <div class="step-label">
+                                        {{ getStepDisplayName(step) }}
+                                    </div>
+                                    <div
+                                        v-if="
+                                            index < experimentSteps.length - 1
+                                        "
+                                        class="step-connector"
+                                    >
+                                        <div
+                                            class="connector-line"
+                                            :class="{
+                                                active:
+                                                    index < currentStepIndex,
+                                            }"
+                                        ></div>
+                                        <el-icon class="connector-arrow"
+                                            ><ArrowRight
+                                        /></el-icon>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
                         <!-- 控制按钮 -->
                         <div class="control-buttons">
                             <!-- 实验未开始状态 -->
@@ -650,6 +704,7 @@
 <script>
 import { ref, computed, onMounted, onUnmounted, inject } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
+import { Check, Timer, ArrowRight } from "@element-plus/icons-vue";
 import ExperimentCreateWizard from "../components/experiment/ExperimentCreateWizard.vue";
 import PretreatmentPanel from "../components/experiment/PretreatmentPanel.vue";
 import ExperimentEndProcessing from "../components/experiment/ExperimentEndProcessing.vue";
@@ -678,6 +733,10 @@ export default {
         const loading = ref(false);
         const isEditMode = ref(false);
         const editingExperiment = ref(null);
+
+        // 实验步骤相关
+        const experimentSteps = ref([]);
+        const currentStepIndex = ref(0);
 
         // 预处理相关状态
         const showPretreatmentProgress = ref(false);
@@ -801,6 +860,10 @@ export default {
 
         const selectExperiment = (experiment) => {
             selectedExperiment.value = experiment;
+            // 获取实验步骤
+            if (experiment && experiment.experiment_id) {
+                fetchExperimentSteps(experiment.experiment_id);
+            }
         };
 
         const getExperimentProgress = (experiment) => {
@@ -1112,6 +1175,9 @@ export default {
                     JSON.stringify(experiment)
                 );
 
+                // 获取实验步骤
+                await fetchExperimentSteps(experiment.experiment_id);
+
                 // 检查是否需要预处理
                 const needsPretreatment =
                     experiment.purge_system ||
@@ -1150,7 +1216,7 @@ export default {
         // 调用后端API开始实验
         const startExperimentAPI = async (experimentId) => {
             const response = await fetch(
-                `http://0.0.0.0:8008/api/experiment-control/start/${experimentId}`,
+                `http://0.0.0.0:8008/api/experiments/data/collection/start?experiment_id=${experimentId}`,
                 {
                     method: "POST",
                     headers: {
@@ -1169,6 +1235,65 @@ export default {
             }
 
             return result;
+        };
+
+        // 获取实验步骤
+        const fetchExperimentSteps = async (experimentId) => {
+            console.log("开始获取实验步骤, experimentId:", experimentId);
+            try {
+                const url = `http://0.0.0.0:8008/api/v1/experiment_mgmt/${experimentId}/steps`;
+                console.log("请求URL:", url);
+
+                const response = await fetch(url, {
+                    method: "GET",
+                    headers: {
+                        "Content-Type": "application/json",
+                    },
+                });
+
+                console.log("响应状态:", response.status);
+
+                if (!response.ok) {
+                    throw new Error(`获取实验步骤失败: ${response.status}`);
+                }
+
+                const result = await response.json();
+                console.log("API响应结果:", result);
+
+                if (result.success) {
+                    experimentSteps.value = result.steps || [];
+                    currentStepIndex.value = 0;
+                    console.log("实验步骤设置成功:", experimentSteps.value);
+                } else {
+                    console.warn("获取实验步骤失败:", result.message);
+                    experimentSteps.value = [];
+                }
+            } catch (error) {
+                console.error("获取实验步骤API调用失败:", error);
+
+                // 如果API失败，提供默认步骤用于测试
+                console.log("使用默认步骤进行测试");
+                experimentSteps.value = [
+                    "purge_column",
+                    "purge_system",
+                    "column_equilibration",
+                    "collect",
+                    "post_processing",
+                ];
+                currentStepIndex.value = 0;
+            }
+        };
+
+        // 获取步骤显示名称
+        const getStepDisplayName = (step) => {
+            const stepNames = {
+                purge_column: "吹扫柱子",
+                purge_system: "吹扫系统",
+                column_equilibration: "润柱",
+                collect: "收集",
+                post_processing: "后处理",
+            };
+            return stepNames[step] || step;
         };
 
         const pauseExperiment = async (experiment) => {
@@ -1222,7 +1347,7 @@ export default {
         // 后端API调用函数
         const pauseExperimentAPI = async (experimentId) => {
             const response = await fetch(
-                `http://0.0.0.0:8008/api/experiment-control/pause/${experimentId}`,
+                `http://0.0.0.0:8008/api/experiments/data/collection/pause?experiment_id=${experimentId}`,
                 {
                     method: "POST",
                     headers: {
@@ -1245,7 +1370,7 @@ export default {
 
         const resumeExperimentAPI = async (experimentId) => {
             const response = await fetch(
-                `http://0.0.0.0:8008/api/experiment-control/resume/${experimentId}`,
+                `http://0.0.0.0:8008/api/experiments/data/collection/resume?experiment_id=${experimentId}`,
                 {
                     method: "POST",
                     headers: {
@@ -1415,7 +1540,7 @@ export default {
 
         const terminateExperimentAPI = async (experimentId) => {
             const response = await fetch(
-                `http://0.0.0.0:8008/api/experiment-control/terminate/${experimentId}`,
+                `http://0.0.0.0:8008/api/experiments/data/collection/terminate?experiment_id=${experimentId}`,
                 {
                     method: "POST",
                     headers: {
@@ -1626,7 +1751,7 @@ export default {
         const syncExperimentStatusFromBackend = async (experimentId) => {
             try {
                 const response = await fetch(
-                    `http://0.0.0.0:8008/api/experiment-control/status/${experimentId}`
+                    `http://0.0.0.0:8008/api/experiments/data/collection/status?experiment_id=${experimentId}`
                 );
 
                 if (!response.ok) {
@@ -1828,6 +1953,9 @@ export default {
             getExperimentStatusType,
             getExperimentStatusText,
             selectExperiment,
+            experimentSteps,
+            currentStepIndex,
+            getStepDisplayName,
             getExperimentProgress,
             getElapsedTime,
             getRemainingTime,
@@ -2292,6 +2420,137 @@ export default {
 
     .step-checklist {
         font-size: 14px;
+    }
+}
+
+/* 实验步骤流程图样式 */
+.experiment-steps-flowchart {
+    margin: 20px 0;
+    padding: 20px;
+    background: #f8f9fa;
+    border-radius: 8px;
+    border: 1px solid #e9ecef;
+}
+
+.flowchart-title {
+    margin: 0 0 15px 0;
+    color: #333;
+    font-size: 16px;
+    font-weight: 600;
+}
+
+.steps-container {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    overflow-x: auto;
+    padding: 10px 0;
+}
+
+.step-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    position: relative;
+    min-width: 120px;
+    flex: 1;
+}
+
+.step-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: #e9ecef;
+    color: #6c757d;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    margin-bottom: 8px;
+    transition: all 0.3s ease;
+}
+
+.step-item.completed .step-icon {
+    background: #28a745;
+    color: white;
+}
+
+.step-item.active .step-icon {
+    background: #007bff;
+    color: white;
+    animation: pulse 2s infinite;
+}
+
+.step-label {
+    font-size: 12px;
+    text-align: center;
+    color: #6c757d;
+    margin-bottom: 10px;
+    line-height: 1.2;
+}
+
+.step-item.active .step-label {
+    color: #007bff;
+    font-weight: 600;
+}
+
+.step-item.completed .step-label {
+    color: #28a745;
+    font-weight: 600;
+}
+
+.step-connector {
+    position: absolute;
+    top: 20px;
+    right: -60px;
+    width: 120px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.connector-line {
+    flex: 1;
+    height: 2px;
+    background: #e9ecef;
+    transition: all 0.3s ease;
+}
+
+.connector-line.active {
+    background: #28a745;
+}
+
+.connector-arrow {
+    color: #6c757d;
+    margin-left: 5px;
+    font-size: 14px;
+}
+
+@keyframes pulse {
+    0%,
+    100% {
+        transform: scale(1);
+        box-shadow: 0 0 0 0 rgba(0, 123, 255, 0.4);
+    }
+    50% {
+        transform: scale(1.05);
+        box-shadow: 0 0 0 10px rgba(0, 123, 255, 0);
+    }
+}
+
+/* 响应式调整 */
+@media (max-width: 768px) {
+    .steps-container {
+        flex-wrap: wrap;
+        gap: 20px;
+    }
+
+    .step-item {
+        min-width: 80px;
+    }
+
+    .step-connector {
+        display: none;
     }
 }
 </style>

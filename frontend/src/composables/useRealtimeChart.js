@@ -17,7 +17,7 @@ export function useRealtimeChart(currentValues) {
     let uv280Line = null; // UV280nm数据线
     let gradientLines = {}; // 原液数据线集合
     let chartData = [];
-    let isChartRunning = false;
+    const isChartRunning = ref(false);
     let chartStartTime = 0;
     let lastUpdateTime = 0;
     let resizeObserver = null;
@@ -45,7 +45,7 @@ export function useRealtimeChart(currentValues) {
             if (point.uv254 !== undefined && point.uv254 !== null) uvValues.push(point.uv254);
             if (point.uv280 !== undefined && point.uv280 !== null) uvValues.push(point.uv280);
 
-            ['gradient-a', 'gradient-b', 'gradient-c', 'gradient-d', 'flowRate'].forEach(key => {
+            ['gradient-a', 'gradient-b', 'gradient-c', 'gradient-d'].forEach(key => {
                 if (point[key] !== undefined && point[key] !== null) {
                     gradientValues.push(point[key]);
                 }
@@ -138,11 +138,6 @@ export function useRealtimeChart(currentValues) {
             key: "gradient-d",
             label: "原液D (%)",
             visible: false,
-        },
-        {
-            key: "flowRate",
-            label: "流速 (mL/min)",
-            visible: true,
         },
     ]);
 
@@ -256,13 +251,12 @@ export function useRealtimeChart(currentValues) {
             .y((d) => yScaleLeft(d.uv280))
             .curve(d3.curveLinear);
 
-        // 为每个原液和流速创建线条生成器
+        // 为每个原液创建线条生成器
         const gradientKeys = [
             "gradient-a",
             "gradient-b",
             "gradient-c",
             "gradient-d",
-            "flowRate",
         ];
         gradientKeys.forEach((key) => {
             gradientLines[key] = d3
@@ -286,13 +280,12 @@ export function useRealtimeChart(currentValues) {
             .attr("stroke", "#06b6d4")
             .attr("stroke-width", 2);
 
-        // 添加原液和流速数据线条路径
+        // 添加原液数据线条路径
         const gradientColors = {
             "gradient-a": "#f56c6c",
             "gradient-b": "#67c23a",
             "gradient-c": "#e6a23c",
             "gradient-d": "#909399",
-            "flowRate": "#8b5cf6",
         };
 
         gradientKeys.forEach((key) => {
@@ -300,7 +293,7 @@ export function useRealtimeChart(currentValues) {
                 .attr("class", `${key}-line`)
                 .attr("fill", "none")
                 .attr("stroke", gradientColors[key])
-                .attr("stroke-width", key === "flowRate" ? 2 : 1.5)
+                .attr("stroke-width", 1.5)
                 .attr("opacity", 0.8);
         });
 
@@ -458,7 +451,6 @@ export function useRealtimeChart(currentValues) {
                 "gradient-b": interpolate(time, sampleGradientData, 'originalB'), // 原液B
                 "gradient-c": interpolate(time, sampleGradientData, 'originalC'), // 原液C
                 "gradient-d": interpolate(time, sampleGradientData, 'originalD'), // 原液D
-                "flowRate": interpolate(time, sampleGradientData, 'flowRate'), // 流速
             });
         }
 
@@ -478,7 +470,6 @@ export function useRealtimeChart(currentValues) {
             "gradient-b",
             "gradient-c",
             "gradient-d",
-            "flowRate",
         ];
 
         gradientKeys.forEach((key) => {
@@ -521,7 +512,7 @@ export function useRealtimeChart(currentValues) {
             generateGradientData();
         }
 
-        isChartRunning = true;
+        isChartRunning.value = true;
 
         // 连接MQTT并订阅UV数据
         connectToMQTT();
@@ -531,7 +522,7 @@ export function useRealtimeChart(currentValues) {
 
     // 停止图表
     const stopChart = () => {
-        isChartRunning = false;
+        isChartRunning.value = false;
 
         // 保存数据到缓存
         saveChartDataToCache();
@@ -553,7 +544,7 @@ export function useRealtimeChart(currentValues) {
 
     // 更新图表
     const updateChart = () => {
-        if (!isChartRunning || !svg) return;
+        if (!isChartRunning.value || !svg) return;
 
         const currentTime = (Date.now() - chartStartTime) / 1000 / 60; // 转换为分钟
 
@@ -634,7 +625,7 @@ export function useRealtimeChart(currentValues) {
                     .transition()
                     .duration(200)
                     .attr("opacity", series.visible ? 1 : 0);
-            } else if (seriesKey.startsWith("gradient-") || seriesKey === "flowRate") {
+            } else if (seriesKey.startsWith("gradient-")) {
                 svg.select(`.${seriesKey}-line`)
                     .transition()
                     .duration(200)
@@ -681,7 +672,7 @@ export function useRealtimeChart(currentValues) {
         disconnectFromMQTT();
 
         // 保存数据到缓存
-        if (isChartRunning) {
+        if (isChartRunning.value) {
             saveChartDataToCache();
         }
 
@@ -745,7 +736,7 @@ export function useRealtimeChart(currentValues) {
                 // 更新当前时间点的数据
                 const currentTime = (Date.now() - chartStartTime) / 1000 / 60; // 转换为分钟
 
-                if (currentTime <= 30 && isChartRunning) {
+                if (currentTime <= 30 && isChartRunning.value) {
                     const timeIndex = Math.floor(currentTime / 0.1);
 
                     if (timeIndex < chartData.length) {
@@ -832,6 +823,65 @@ export function useRealtimeChart(currentValues) {
         }
     };
 
+    // 清空数据并重新开始采集
+    const clearAndRestartChart = async (wavelengthFetcher = null) => {
+        try {
+            // 先停止当前图表
+            stopChart();
+
+            // 清空缓存
+            clearChartCache();
+
+            // 清空当前数据
+            chartData = [];
+            chartStartTime = 0;
+            lastUpdateTime = 0;
+            uvDataRange = { min: 0, max: 1 };
+            gradientDataRange = { min: 0, max: 100 };
+
+            console.log('图表数据已清空，准备重新开始采集');
+
+            // 重新开始采集
+            if (wavelengthFetcher) {
+                await wavelengthFetcher();
+            }
+            startChart();
+
+            console.log('图表数据已清空，重新开始采集');
+        } catch (error) {
+            console.error('清空并重启图表失败:', error);
+        }
+    };
+
+    // 只清空数据，不重新开始采集
+    const clearChartDataOnly = () => {
+        try {
+            // 清空缓存
+            clearChartCache();
+
+            // 清空当前数据
+            chartData = [];
+            chartStartTime = 0;
+            lastUpdateTime = 0;
+            uvDataRange = { min: 0, max: 1 };
+            gradientDataRange = { min: 0, max: 100 };
+
+            // 更新图表显示（清空图表内容）
+            if (svg) {
+                svg.selectAll('.uv254-line').datum([]);
+                svg.selectAll('.uv280-line').datum([]);
+                Object.keys(gradientLines).forEach(key => {
+                    svg.selectAll(`.${key}-line`).datum([]);
+                });
+                updateChart();
+            }
+
+            console.log('图表数据已清空');
+        } catch (error) {
+            console.error('清空图表数据失败:', error);
+        }
+    };
+
     return {
         // 响应式状态
         chartContainer,
@@ -842,7 +892,7 @@ export function useRealtimeChart(currentValues) {
         runningTime,
 
         // 状态查询
-        isRunning: () => isChartRunning,
+        isRunning: isChartRunning,
 
         // 图表方法
         initChart,
@@ -868,5 +918,7 @@ export function useRealtimeChart(currentValues) {
         saveChartDataToCache,
         loadChartDataFromCache,
         clearChartCache,
+        clearAndRestartChart,
+        clearChartDataOnly,
     };
 }
