@@ -759,6 +759,18 @@
                             <el-icon class="btn-icon"><Refresh /></el-icon>
                             <span class="btn-text">润柱</span>
                         </el-button>
+
+                        <!-- Mock模式按钮 -->
+                        <el-button
+                            type="info"
+                            size="large"
+                            class="control-btn control-btn-mock"
+                            @click="openMockModeDialog"
+                            plain
+                        >
+                            <el-icon class="btn-icon"><Tools /></el-icon>
+                            <span class="btn-text">Mock模式</span>
+                        </el-button>
                     </div>
                 </div>
 
@@ -1140,6 +1152,99 @@
                         </div>
                     </template>
                 </el-dialog>
+
+                <!-- Mock模式弹窗 -->
+                <el-dialog
+                    v-model="showMockModeDialog"
+                    title="Mock模式设置"
+                    width="500px"
+                >
+                    <div class="mock-mode-dialog-content">
+                        <div class="mock-info">
+                            <el-alert
+                                title="Mock模式说明"
+                                type="info"
+                                description="启用Mock模式后，设备将返回模拟数据而非真实硬件数据，用于开发和测试。"
+                                show-icon
+                                :closable="false"
+                            />
+                        </div>
+
+                        <el-divider />
+
+                        <div v-if="loadingDevices" class="loading-section">
+                            <el-skeleton :rows="3" animated />
+                        </div>
+
+                        <div v-else class="devices-section">
+                            <!-- 全部Mock开关 -->
+                            <div class="device-item global-mock">
+                                <div class="device-info">
+                                    <el-icon class="device-icon"><Setting /></el-icon>
+                                    <div class="device-details">
+                                        <h4>全部设备</h4>
+                                        <p>一键控制所有设备的Mock模式</p>
+                                    </div>
+                                </div>
+                                <el-switch
+                                    v-model="globalMockMode"
+                                    @change="toggleGlobalMockMode"
+                                    active-text="Mock"
+                                    inactive-text="真实"
+                                    :loading="updatingGlobalMock"
+                                />
+                            </div>
+
+                            <el-divider />
+
+                            <!-- 单个设备Mock开关 -->
+                            <div class="devices-list">
+                                <div
+                                    v-for="device in devices"
+                                    :key="device.device_id"
+                                    class="device-item"
+                                >
+                                    <div class="device-info">
+                                        <el-icon class="device-icon" :style="{color: getDeviceStatusColor(device.status)}">
+                                            <component :is="getDeviceIcon(device.type)" />
+                                        </el-icon>
+                                        <div class="device-details">
+                                            <h4>{{ device.device_name || device.device_id }}</h4>
+                                            <p>{{ getDeviceTypeText(device.type) }} - {{ getDeviceStatusText(device.status) }}</p>
+                                        </div>
+                                    </div>
+                                    <el-switch
+                                        v-model="device.mockMode"
+                                        @change="toggleDeviceMockMode(device)"
+                                        active-text="Mock"
+                                        inactive-text="真实"
+                                        :loading="device.updating"
+                                        :disabled="updatingGlobalMock"
+                                    />
+                                </div>
+                            </div>
+
+                            <div v-if="devices.length === 0" class="empty-devices">
+                                <el-empty description="暂无设备数据" />
+                            </div>
+                        </div>
+                    </div>
+
+                    <template #footer>
+                        <div class="dialog-footer">
+                            <el-button @click="showMockModeDialog = false">
+                                关闭
+                            </el-button>
+                            <el-button
+                                type="primary"
+                                @click="refreshDevicesList"
+                                :loading="loadingDevices"
+                            >
+                                刷新设备
+                            </el-button>
+                        </div>
+                    </template>
+                </el-dialog>
             </el-col>
         </el-row>
 
@@ -1205,7 +1310,7 @@
 
 <script>
 import { ref, onMounted, onUnmounted, nextTick } from "vue";
-import { ArrowDown, Delete, Refresh, Timer } from "@element-plus/icons-vue";
+import { ArrowDown, Delete, Refresh, Timer, Tools, Setting, Operation, View, Box, Switch, Monitor } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { useRealtimeChart } from "@/composables/useRealtimeChart.js";
 import { useDeviceStatus } from "@/composables/useDeviceStatus.js";
@@ -1381,6 +1486,13 @@ export default {
         const remainingConditioningTime = ref(0);
         const currentSignalValue = ref(0);
         let conditioningInterval = null;
+
+        // Mock模式相关状态
+        const showMockModeDialog = ref(false);
+        const devices = ref([]);
+        const loadingDevices = ref(false);
+        const globalMockMode = ref(false);
+        const updatingGlobalMock = ref(false);
 
         // 获取检测器波长的方法
         const fetchWavelengths = async () => {
@@ -1571,6 +1683,219 @@ export default {
                 console.error("停止润柱失败:", error);
                 ElMessage.error("停止润柱失败");
             }
+        };
+
+        // Mock模式相关功能
+        const openMockModeDialog = async () => {
+            showMockModeDialog.value = true;
+            await fetchDevicesList();
+        };
+
+        // 获取设备列表
+        const fetchDevicesList = async () => {
+            loadingDevices.value = true;
+            try {
+                const response = await fetch(
+                    'http://0.0.0.0:8008/api/hardware/devices-status',
+                    {
+                        method: 'GET',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                    }
+                );
+
+                if (!response.ok) {
+                    throw new Error(`获取设备列表失败: ${response.status}`);
+                }
+
+                const result = await response.json();
+                console.log("设备列表API响应:", result);
+
+                if (result.success && Array.isArray(result.devices)) {
+                    devices.value = result.devices.map(device => ({
+                        ...device,
+                        mockMode: device.mock_mode || false,
+                        updating: false
+                    }));
+
+                    // 检查是否所有设备都是mock模式
+                    globalMockMode.value = devices.value.length > 0 &&
+                        devices.value.every(device => device.mockMode);
+
+                    console.log("设备列表设置成功:", devices.value);
+                } else {
+                    console.warn("设备列表格式错误:", result);
+                    devices.value = [];
+                }
+            } catch (error) {
+                console.error("获取设备列表失败:", error);
+                ElMessage.error("获取设备列表失败: " + error.message);
+
+                // 提供测试数据
+                devices.value = [
+                    {
+                        device_id: "bubble_sensor_1",
+                        device_name: "气泡传感器1",
+                        device_type: "bubble_sensor",
+                        type: "bubble_sensor",
+                        status: "online",
+                        mockMode: false,
+                        updating: false
+                    },
+                    {
+                        device_id: "pump_001",
+                        device_name: "高压泵-01",
+                        device_type: "pump",
+                        type: "pump",
+                        status: "online",
+                        mockMode: false,
+                        updating: false
+                    },
+                    {
+                        device_id: "detector_001",
+                        device_name: "UV检测器-01",
+                        device_type: "detector",
+                        type: "detector",
+                        status: "online",
+                        mockMode: true,
+                        updating: false
+                    },
+                    {
+                        device_id: "collector_001",
+                        device_name: "分馏收集器-01",
+                        device_type: "collector",
+                        type: "collector",
+                        status: "offline",
+                        mockMode: false,
+                        updating: false
+                    }
+                ];
+            } finally {
+                loadingDevices.value = false;
+            }
+        };
+
+        // 切换全局Mock模式
+        const toggleGlobalMockMode = async (value) => {
+            updatingGlobalMock.value = true;
+            try {
+                await setMockMode(value, null);
+
+                // 更新所有设备的mock模式状态
+                devices.value.forEach(device => {
+                    device.mockMode = value;
+                });
+
+                ElMessage.success(`已${value ? '启用' : '关闭'}全部设备的Mock模式`);
+            } catch (error) {
+                globalMockMode.value = !value; // 恢复原状态
+                ElMessage.error("设置全局Mock模式失败: " + error.message);
+            } finally {
+                updatingGlobalMock.value = false;
+            }
+        };
+
+        // 切换单个设备Mock模式
+        const toggleDeviceMockMode = async (device) => {
+            device.updating = true;
+            try {
+                await setMockMode(device.mockMode, device.device_id);
+                ElMessage.success(`已${device.mockMode ? '启用' : '关闭'}设备 ${device.device_name || device.device_id} 的Mock模式`);
+
+                // 更新全局开关状态
+                globalMockMode.value = devices.value.length > 0 &&
+                    devices.value.every(d => d.mockMode);
+            } catch (error) {
+                device.mockMode = !device.mockMode; // 恢复原状态
+                ElMessage.error("设置设备Mock模式失败: " + error.message);
+            } finally {
+                device.updating = false;
+            }
+        };
+
+        // 调用Mock模式API
+        const setMockMode = async (mockMode, deviceId = null) => {
+            const requestBody = { mock: mockMode };
+            if (deviceId) {
+                requestBody.device_id = deviceId;
+            }
+
+            const response = await fetch(
+                'http://0.0.0.0:8008/api/hardware/mock-mode',
+                {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(requestBody)
+                }
+            );
+
+            if (!response.ok) {
+                throw new Error(`设置Mock模式失败: ${response.status}`);
+            }
+
+            const result = await response.json();
+            console.log("Mock模式设置响应:", result);
+
+            if (!result.success) {
+                throw new Error(result.message || "设置Mock模式失败");
+            }
+
+            return result;
+        };
+
+        // 刷新设备列表
+        const refreshDevicesList = async () => {
+            await fetchDevicesList();
+            ElMessage.success("设备列表已刷新");
+        };
+
+        // 获取设备类型文本
+        const getDeviceTypeText = (type) => {
+            const typeMap = {
+                'pump': '高压泵',
+                'detector': '检测器',
+                'collector': '收集器',
+                'valve': '阀门',
+                'sensor': '传感器'
+            };
+            return typeMap[type] || type;
+        };
+
+        // 获取设备状态文本
+        const getDeviceStatusText = (status) => {
+            const statusMap = {
+                'online': '在线',
+                'offline': '离线',
+                'error': '错误',
+                'maintenance': '维护中'
+            };
+            return statusMap[status] || status;
+        };
+
+        // 获取设备状态颜色
+        const getDeviceStatusColor = (status) => {
+            const colorMap = {
+                'online': '#67c23a',
+                'offline': '#909399',
+                'error': '#f56c6c',
+                'maintenance': '#e6a23c'
+            };
+            return colorMap[status] || '#909399';
+        };
+
+        // 获取设备图标
+        const getDeviceIcon = (type) => {
+            const iconMap = {
+                'pump': 'Operation',
+                'detector': 'View',
+                'collector': 'Box',
+                'valve': 'Switch',
+                'sensor': 'Monitor'
+            };
+            return iconMap[type] || 'Setting';
         };
 
         // 用户选择取消MQTT连接
@@ -1945,6 +2270,21 @@ export default {
             openColumnConditioningDialog,
             startColumnConditioning,
             stopColumnConditioning,
+
+            // Mock模式相关
+            showMockModeDialog,
+            devices,
+            loadingDevices,
+            globalMockMode,
+            updatingGlobalMock,
+            openMockModeDialog,
+            toggleGlobalMockMode,
+            toggleDeviceMockMode,
+            refreshDevicesList,
+            getDeviceTypeText,
+            getDeviceStatusText,
+            getDeviceStatusColor,
+            getDeviceIcon,
 
             // MQTT连接失败处理
             showMqttConnectionDialog,
@@ -3815,7 +4155,8 @@ export default {
 
 .control-btn-gradient,
 .control-btn-tube,
-.control-btn-conditioning {
+.control-btn-conditioning,
+.control-btn-mock {
     background: white !important;
     border-color: #409eff !important;
     color: #409eff !important;
@@ -3823,7 +4164,8 @@ export default {
 
 .control-btn-gradient:hover,
 .control-btn-tube:hover,
-.control-btn-conditioning:hover {
+.control-btn-conditioning:hover,
+.control-btn-mock:hover {
     background: #409eff !important;
     color: white !important;
     transform: translateY(-2px);
@@ -3929,5 +4271,80 @@ export default {
     .control-btn .btn-text {
         font-size: 10px;
     }
+}
+
+/* Mock模式弹窗样式 */
+.mock-mode-dialog-content {
+    padding: 10px 0;
+}
+
+.mock-info {
+    margin-bottom: 20px;
+}
+
+.device-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 15px;
+    border: 1px solid #e4e7ed;
+    border-radius: 8px;
+    margin-bottom: 10px;
+    transition: all 0.3s ease;
+}
+
+.device-item:hover {
+    border-color: #409eff;
+    background-color: #f0f9ff;
+}
+
+.device-item.global-mock {
+    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+    border-color: #6c757d;
+    font-weight: 600;
+}
+
+.device-item.global-mock:hover {
+    border-color: #495057;
+    background: linear-gradient(135deg, #e9ecef 0%, #dee2e6 100%);
+}
+
+.device-info {
+    display: flex;
+    align-items: center;
+    flex: 1;
+}
+
+.device-icon {
+    font-size: 24px;
+    margin-right: 15px;
+    min-width: 24px;
+}
+
+.device-details h4 {
+    margin: 0 0 4px 0;
+    font-size: 16px;
+    color: #303133;
+}
+
+.device-details p {
+    margin: 0;
+    font-size: 13px;
+    color: #606266;
+}
+
+.devices-list {
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.loading-section {
+    padding: 20px;
+}
+
+.empty-devices {
+    text-align: center;
+    padding: 40px 20px;
+    color: #909399;
 }
 </style>

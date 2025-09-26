@@ -199,7 +199,7 @@
                                 <el-pagination
                                     v-model:current-page="currentPage"
                                     v-model:page-size="pageSize"
-                                    :page-sizes="[5, 10, 20, 50]"
+                                    :page-sizes="[4, 8, 12, 20]"
                                     :small="true"
                                     :total="totalExperiments"
                                     layout="total, sizes, prev, pager, next, jumper"
@@ -754,7 +754,7 @@ export default {
 
         // 分页相关状态
         const currentPage = ref(1);
-        const pageSize = ref(5);
+        const pageSize = ref(4);
         const totalExperiments = ref(0);
         const paginatedExperiments = ref([]);
 
@@ -938,7 +938,7 @@ export default {
             loading.value = true;
             try {
                 const response = await fetch(
-                    "http://0.0.0.0:8008/api/experiment-data/"
+                    "http://0.0.0.0:8008/api/experiment_mgmt/?limit=100"
                 );
                 if (response.ok) {
                     const data = await response.json();
@@ -1011,7 +1011,7 @@ export default {
                 };
 
                 const response = await fetch(
-                    "http://0.0.0.0:8008/api/experiment-data/",
+                    "http://0.0.0.0:8008/api/experiment_mgmt/",
                     {
                         method: "POST",
                         headers: {
@@ -1043,7 +1043,7 @@ export default {
         const updateExperiment = async (experimentId, updateData) => {
             try {
                 const response = await fetch(
-                    `http://0.0.0.0:8008/api/experiment-data/${experimentId}`,
+                    `http://0.0.0.0:8008/api/experiment_mgmt/${experimentId}`,
                     {
                         method: "PUT",
                         headers: {
@@ -1075,7 +1075,7 @@ export default {
         const deleteExperiment = async (experimentId) => {
             try {
                 const response = await fetch(
-                    `http://0.0.0.0:8008/api/experiment-data/${experimentId}`,
+                    `http://0.0.0.0:8008/api/experiment_mgmt/${experimentId}`,
                     {
                         method: "DELETE",
                     }
@@ -1908,7 +1908,25 @@ export default {
             // 3. 同步后端的实时状态（覆盖localStorage状态）
             await syncRunningExperimentStatus();
 
-            // 4. 最后连接MQTT进行实时更新
+            // 4. 如果有currentExperiment，获取实验步骤
+            if (
+                currentExperiment.value &&
+                currentExperiment.value.experiment_id
+            ) {
+                try {
+                    await fetchExperimentSteps(
+                        currentExperiment.value.experiment_id
+                    );
+                    console.log(
+                        "页面刷新时自动获取实验步骤:",
+                        currentExperiment.value.experiment_id
+                    );
+                } catch (error) {
+                    console.error("获取实验步骤失败:", error);
+                }
+            }
+
+            // 5. 最后连接MQTT进行实时更新
             await connectMQTT();
         });
 
@@ -2426,10 +2444,10 @@ export default {
 /* 实验步骤流程图样式 */
 .experiment-steps-flowchart {
     margin: 20px 0;
-    padding: 20px;
+    padding: 0px;
     background: #f8f9fa;
-    border-radius: 8px;
-    border: 1px solid #e9ecef;
+    border-radius: 0px;
+    border: 0px solid #e9ecef;
 }
 
 .flowchart-title {
@@ -2444,7 +2462,7 @@ export default {
     align-items: center;
     justify-content: space-between;
     overflow-x: auto;
-    padding: 10px 0;
+    padding: 0px 0;
 }
 
 .step-item {
@@ -2452,7 +2470,7 @@ export default {
     flex-direction: column;
     align-items: center;
     position: relative;
-    min-width: 120px;
+    min-width: 100px;
     flex: 1;
 }
 

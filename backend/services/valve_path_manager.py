@@ -34,6 +34,7 @@ class ValvePathManager:
     def _load_device_mappings(self):
         """加载设备映射配置"""
         try:
+            print(f"正在加载设备映射配置...")
             mappings = self.db.query_data(
                 "device_mapping",
                 where_condition="is_active = ?",
@@ -45,9 +46,18 @@ class ValvePathManager:
             }
 
             logger.info(f"加载设备映射配置: {len(self.device_mappings)} 个设备")
+            print(f"成功加载设备映射: {len(self.device_mappings)} 个设备")
+
+            if self.device_mappings:
+                print("设备映射详情:")
+                for device_code, mapping in self.device_mappings.items():
+                    print(f"  {device_code} -> {mapping.get('physical_id')} ({mapping.get('controller_type')})")
 
         except Exception as e:
             logger.error(f"加载设备映射配置失败: {e}")
+            print(f"加载设备映射配置失败: {e}")
+            import traceback
+            traceback.print_exc()
             self.device_mappings = {}
 
     def _get_controller(self, controller_type: str):
@@ -68,6 +78,7 @@ class ValvePathManager:
     def get_tube_path(self, module_number: int, tube_number: int) -> List[Dict[str, Any]]:
         """获取指定试管的路径"""
         try:
+            print(f"查询试管路径: 模块{module_number}, 试管{tube_number}")
             paths = self.db.query_data(
                 "tube_valve_path",
                 where_condition="module_number = ? AND tube_number = ?",
@@ -75,10 +86,19 @@ class ValvePathManager:
                 order_by="sequence_order ASC"
             )
 
+            print(f"找到路径步骤: {len(paths)} 个")
+            if paths:
+                print("路径详情:")
+                for i, path in enumerate(paths):
+                    print(f"  步骤{i+1}: {path.get('device_code')} -> {path.get('action_type')} (位置: {path.get('target_position')})")
+
             return paths
 
         except Exception as e:
             logger.error(f"获取试管路径失败 (模块{module_number}, 试管{tube_number}): {e}")
+            print(f"获取试管路径失败: {e}")
+            import traceback
+            traceback.print_exc()
             return []
 
     def get_all_tube_paths(self, module_number: Optional[int] = None) -> List[Dict[str, Any]]:
@@ -397,9 +417,14 @@ class ValvePathExecutor:
         action_type = step['action_type']
         target_position = step.get('target_position')
 
+        print(f"执行步骤: {device_code} -> {action_type} (位置: {target_position})")
+
         # 查找设备映射
         mapping = self.path_manager.device_mappings.get(device_code)
         if not mapping:
+            error_msg = f'设备映射未找到: {device_code}'
+            print(f"错误: {error_msg}")
+            print(f"可用的设备映射: {list(self.path_manager.device_mappings.keys())}")
             return {
                 'sequence_order': step['sequence_order'],
                 'device_code': device_code,
@@ -408,7 +433,7 @@ class ValvePathExecutor:
                 'target_position': target_position,
                 'success': False,
                 'physical_id': None,
-                'error_message': f'设备映射未找到: {device_code}',
+                'error_message': error_msg,
                 'execution_time': 0
             }
 
@@ -536,3 +561,204 @@ class ValvePathExecutor:
                 'execution_time': round(execution_time, 3),
                 'execution_results': []
             }
+
+def create_test_data(path_manager: ValvePathManager) -> bool:
+    """创建测试数据"""
+    print("创建测试数据...")
+
+    try:
+        # 创建设备映射测试数据
+        test_mappings = [
+            {
+                'device_code': 'MV9',
+                'device_name': '多向阀9',
+                'device_type': 'multi_valve',
+                'controller_type': 'multi_valve_controller',
+                'physical_id': '多9',
+                'is_active': 1,
+                'created_at': datetime.now().isoformat(),
+                'updated_at': datetime.now().isoformat()
+            },
+            {
+                'device_code': 'V1',
+                'device_name': '电磁阀1',
+                'device_type': 'valve',
+                'controller_type': 'valve_controller',
+                'physical_id': '双1',
+                'is_active': 1,
+                'created_at': datetime.now().isoformat(),
+                'updated_at': datetime.now().isoformat()
+            },
+            {
+                'device_code': 'MV4',
+                'device_name': '多向阀4',
+                'device_type': 'multi_valve',
+                'controller_type': 'multi_valve_controller',
+                'physical_id': '多4',
+                'is_active': 1,
+                'created_at': datetime.now().isoformat(),
+                'updated_at': datetime.now().isoformat()
+            },
+            {
+                'device_code': 'MV1',
+                'device_name': '多向阀1',
+                'device_type': 'multi_valve',
+                'controller_type': 'multi_valve_controller',
+                'physical_id': '多1',
+                'is_active': 1,
+                'created_at': datetime.now().isoformat(),
+                'updated_at': datetime.now().isoformat()
+            },
+            {
+                'device_code': 'MV11',
+                'device_name': '多向阀11',
+                'device_type': 'multi_valve',
+                'controller_type': 'multi_valve_controller',
+                'physical_id': '多11',
+                'is_active': 1,
+                'created_at': datetime.now().isoformat(),
+                'updated_at': datetime.now().isoformat()
+            }
+        ]
+
+        for mapping in test_mappings:
+            path_manager.create_device_mapping(mapping)
+
+        # 创建试管路径测试数据 - 模块1试管1的动作序列
+        test_path_steps = [
+            {
+                'sequence_order': 1,
+                'device_code': 'MV9',
+                'device_type': 'multi_valve',
+                'action_type': 'turn_to',
+                'target_position': 1,
+                'description': '多向阀9转到1',
+                'is_required': True
+            },
+            {
+                'sequence_order': 2,
+                'device_code': 'V1',
+                'device_type': 'valve',
+                'action_type': 'open',
+                'target_position': None,
+                'description': '电磁阀1开',
+                'is_required': True
+            },
+            {
+                'sequence_order': 3,
+                'device_code': 'MV4',
+                'device_type': 'multi_valve',
+                'action_type': 'turn_to',
+                'target_position': 1,
+                'description': '多向阀4转到1',
+                'is_required': True
+            },
+            {
+                'sequence_order': 4,
+                'device_code': 'MV1',
+                'device_type': 'multi_valve',
+                'action_type': 'turn_to',
+                'target_position': 1,
+                'description': '多向阀1转到1',
+                'is_required': True
+            },
+            {
+                'sequence_order': 5,
+                'device_code': 'MV11',
+                'device_type': 'multi_valve',
+                'action_type': 'turn_to',
+                'target_position': 1,
+                'description': '多向阀11转到1',
+                'is_required': True
+            }
+        ]
+
+        path_manager.create_tube_path(1, 1, test_path_steps)
+        print("测试数据创建完成")
+        return True
+
+    except Exception as e:
+        print(f"创建测试数据失败: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+if __name__ == "__main__":
+    import os
+
+    print("开始测试 ValvePathManager...")
+
+    # 检查数据库文件
+    db_path = "D:/back/chromatography_system/backend/data/database/chromatography.db"
+    if not os.path.exists(db_path):
+        print(f"错误: 数据库文件不存在: {db_path}")
+
+        # 尝试创建数据库目录
+        db_dir = os.path.dirname(db_path)
+        if not os.path.exists(db_dir):
+            print(f"创建数据库目录: {db_dir}")
+            os.makedirs(db_dir, exist_ok=True)
+
+        print(f"将使用新建的数据库文件: {db_path}")
+
+    print(f"数据库文件路径: {db_path}")
+
+    try:
+        # 初始化管理器和执行器
+        print("\n初始化ValvePathManager...")
+        path_manager = ValvePathManager(db_path=db_path)
+        executor = ValvePathExecutor(path_manager)
+
+        print(f"设备映射数量: {len(path_manager.device_mappings)}")
+
+        # 检查数据库中的数据
+        print("\n检查现有数据...")
+        all_paths = path_manager.get_all_tube_paths()
+        print(f"数据库中总路径数: {len(all_paths)}")
+
+        # 如果没有数据，创建测试数据
+        if len(all_paths) == 0 or len(path_manager.device_mappings) == 0:
+            print("\n数据库中没有数据，创建测试数据...")
+            if create_test_data(path_manager):
+                # 重新检查数据
+                all_paths = path_manager.get_all_tube_paths()
+                print(f"创建测试数据后，路径数: {len(all_paths)}")
+                print(f"设备映射数: {len(path_manager.device_mappings)}")
+
+        if all_paths:
+            print("前5个路径:")
+            for path in all_paths[:5]:
+                print(f"  模块{path['module_number']}, 试管{path['tube_number']}, 设备: {path['device_code']}")
+
+        # 获取统计信息
+        print("\n获取统计信息...")
+        stats = path_manager.get_path_statistics()
+        print(f"路径统计: {stats}")
+
+        async def execute():
+            print("\n开始执行试管路径测试...")
+            result = await executor.execute_tube_path(1, 1)
+            print(f"执行结果: {result}")
+
+            # 如果模块1试管1不存在，尝试第一个可用的路径
+            if not result['success'] and all_paths:
+                first_path = all_paths[0]
+                module_num = first_path['module_number']
+                tube_num = first_path['tube_number']
+                print(f"\n尝试执行第一个可用路径: 模块{module_num}, 试管{tube_num}")
+                result2 = await executor.execute_tube_path(module_num, tube_num)
+                print(f"执行结果: {result2}")
+
+        # 执行异步测试
+        print("\n执行异步测试...")
+        asyncio.run(execute())
+
+        print("\n测试完成！")
+
+    except Exception as e:
+        print(f"测试过程中发生异常: {e}")
+        import traceback
+        traceback.print_exc()
+
+

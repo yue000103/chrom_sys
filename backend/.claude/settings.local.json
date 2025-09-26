@@ -8,7 +8,10 @@
       "Read(//d/back/chrom_ai/硬件接口文档/collect/**)",
       "Read(//d/back/chrom_ai/硬件接口文档/host/**)",
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(find:*)",
+      "Read(//d/back/chromatography_system/**)"
     ],
     "deny": [],
     "ask": []

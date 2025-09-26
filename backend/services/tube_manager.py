@@ -414,17 +414,30 @@ class TubeManager:
 class TubeCollectionManager:
     """试管收集管理器 - 专门处理实验过程中的试管收集逻辑"""
 
-    def __init__(self, flow_rate_ml_min: float, collection_volume_ml: float):
+    def __init__(self, flow_rate_ml_min: float, collection_volume_ml: float, experiment_manager=None):
         """
         初始化试管收集管理器
 
         Args:
             flow_rate_ml_min: 流速 (ml/min)
             collection_volume_ml: 每根试管收集体积 (ml)
+            experiment_manager: 实验功能管理器引用，用于获取rack信息
         """
         self.flow_rate = flow_rate_ml_min
         self.collection_volume = collection_volume_ml
+        self.experiment_manager = experiment_manager
         self.collection_time_per_tube = self._calculate_collection_time()
+
+        # 初始化阀门路径管理器
+        try:
+            from services.valve_path_manager import ValvePathManager, ValvePathExecutor
+            self.valve_path_manager = ValvePathManager()
+            self.valve_path_executor = ValvePathExecutor(self.valve_path_manager)
+            logger.info("阀门路径管理器初始化成功")
+        except Exception as e:
+            logger.error(f"阀门路径管理器初始化失败: {e}")
+            self.valve_path_manager = None
+            self.valve_path_executor = None
 
         # 验证参数
         if not self.validate_tube_parameters(flow_rate_ml_min, collection_volume_ml):
@@ -433,6 +446,74 @@ class TubeCollectionManager:
         logger.info(f"试管收集管理器初始化: 流速={self.flow_rate}ml/min, "
                    f"收集体积={self.collection_volume}ml, "
                    f"每管时间={self.collection_time_per_tube:.2f}秒")
+
+    def _get_current_tube_count(self) -> int:
+        """
+        从实验管理器获取当前rack的tube_count
+
+        Returns:
+            int: 试管数量，默认40
+        """
+        if self.experiment_manager and hasattr(self.experiment_manager, 'current_rack_id'):
+            try:
+                current_experiment_id = self.experiment_manager.get_current_experiment_id()
+                if current_experiment_id:
+                    rack_info = self.experiment_manager._get_cached_data(current_experiment_id, 'rack_info')
+                    if rack_info and 'tube_count' in rack_info:
+                        return rack_info['tube_count']
+            except Exception as e:
+                logger.warning(f"获取rack tube_count失败，使用默认值40: {e}")
+
+        # 默认返回40
+        return 40
+
+    def _tube_id_to_module_tube(self, tube_id: int) -> tuple[int, int]:
+        """
+        将试管ID转换为模块号和试管号
+
+        Args:
+            tube_id: 试管ID (1-N)
+
+        Returns:
+            tuple: (module_number, tube_number)
+        """
+        # 正确映射：试管号保持原值，只计算模块号
+        # tube_id 1-20 -> module 1, tube 1-20
+        # tube_id 21-40 -> module 2, tube 21-40
+        # tube_id 41-60 -> module 3, tube 41-60
+
+        tubes_per_module = self._get_tubes_per_module()
+
+        if tube_id <= 0:
+            return 1, 1
+
+        module_number = ((tube_id - 1) // tubes_per_module) + 1
+        tube_number = tube_id  # 试管号保持原值
+
+        logger.debug(f"试管ID {tube_id} 转换为 模块{module_number}, 试管{tube_number} (每模块{tubes_per_module}管)")
+        return module_number, tube_number
+
+    def _get_tubes_per_module(self) -> int:
+        """
+        获取每个模块的试管数量
+
+        Returns:
+            int: 每个模块的试管数量，默认20
+        """
+        # 可以从rack配置或数据库中获取这个信息
+        # 目前使用固定值，未来可以从实验管理器或数据库配置中获取
+        try:
+            if self.experiment_manager:
+                current_experiment_id = self.experiment_manager.get_current_experiment_id()
+                if current_experiment_id:
+                    rack_info = self.experiment_manager._get_cached_data(current_experiment_id, 'rack_info')
+                    if rack_info and 'tubes_per_module' in rack_info:
+                        return rack_info['tubes_per_module']
+        except Exception as e:
+            logger.debug(f"获取tubes_per_module失败，使用默认值: {e}")
+
+        # 默认每个模块20个试管
+        return 20
 
     def _calculate_collection_time(self) -> float:
         """
@@ -485,7 +566,7 @@ class TubeCollectionManager:
         切换到指定试管 - 执行具体的硬件切换操作
 
         Args:
-            tube_id: 目标试管ID (1-40)
+            tube_id: 目标试管ID (1-N)
 
         Returns:
             bool: 切换是否成功
@@ -498,16 +579,13 @@ class TubeCollectionManager:
 
             logger.info(f"开始切换到试管 {tube_id}")
 
-            # 这里放置具体的硬件切换逻辑
-            # 比如控制机械臂、阀门、收集器位置等
-
             # 步骤1: 停止当前收集
-            await self._stop_current_collection()
+            # await self._stop_current_collection()
 
             # 步骤2: 移动到目标试管位置
             await self._move_to_tube_position(tube_id)
 
-            # 步骤3: 开始新试管的收集
+            # 步骤3: 开始新试管的收集（这里会执行阀门路径切换）
             await self._start_tube_collection(tube_id)
 
             logger.info(f"成功切换到试管 {tube_id}")
@@ -526,25 +604,44 @@ class TubeCollectionManager:
 
     async def _move_to_tube_position(self, tube_id: int):
         """移动到目标试管位置"""
-        # 模拟机械移动操作
-        # 实际实现可能包括：
-        # - 计算试管架位置
-        # - 控制X/Y轴移动
-        # - 等待移动完成
+
         import asyncio
         await asyncio.sleep(0.1)  # 100ms移动时间
         logger.debug(f"移动到试管 {tube_id} 位置")
 
     async def _start_tube_collection(self, tube_id: int):
         """开始新试管的收集"""
-        # 模拟开始收集操作
-        # 实际实现可能包括：
-        # - 打开阀门
-        # - 启动收集模式
-        # - 确认收集状态
-        import asyncio
-        await asyncio.sleep(0.05)  # 50ms
-        logger.debug(f"开始试管 {tube_id} 收集")
+        try:
+            if self.valve_path_executor is None:
+                logger.warning("阀门路径执行器未初始化，使用模拟模式")
+                import asyncio
+                await asyncio.sleep(0.05)  # 50ms
+                logger.debug(f"开始试管 {tube_id} 收集（模拟模式）")
+                return
+
+            # 将试管ID转换为模块号和试管号
+            module_number, tube_number = self._tube_id_to_module_tube(tube_id)
+
+            logger.info(f"开始试管 {tube_id} 收集: 模块{module_number}, 试管{tube_number}")
+
+            # 使用阀门路径执行器执行路径
+            result = await self.valve_path_executor.execute_tube_path(module_number, tube_number)
+
+            if result['success']:
+                logger.info(f"试管 {tube_id} 路径执行成功: {result['message']}")
+                logger.debug(f"路径执行详情: 总步骤={result['total_steps']}, "
+                           f"成功步骤={result['success_steps']}, "
+                           f"耗时={result['execution_time']:.3f}s")
+            else:
+                logger.error(f"试管 {tube_id} 路径执行失败: {result['message']}")
+                # 仍然继续，只记录错误但不中断实验
+
+        except Exception as e:
+            logger.error(f"试管 {tube_id} 收集启动异常: {e}")
+            # 发生异常时使用备用模拟模式
+            import asyncio
+            await asyncio.sleep(0.05)  # 50ms
+            logger.debug(f"试管 {tube_id} 收集启动（备用模拟模式）")
 
     def _validate_tube_id(self, tube_id: int) -> bool:
         """
@@ -556,7 +653,11 @@ class TubeCollectionManager:
         Returns:
             bool: ID是否有效
         """
-        return 1 <= tube_id <= 40
+        max_tube_count = self._get_current_tube_count()
+        is_valid = 1 <= tube_id <= max_tube_count
+        if not is_valid:
+            logger.warning(f"试管ID {tube_id} 超出有效范围 1-{max_tube_count}")
+        return is_valid
 
     def get_collection_time_per_tube(self) -> float:
         """
@@ -567,16 +668,18 @@ class TubeCollectionManager:
         """
         return self.collection_time_per_tube
 
-    def get_total_collection_time(self, tube_count: int = 40) -> float:
+    def get_total_collection_time(self, tube_count: int = None) -> float:
         """
         获取总收集时间
 
         Args:
-            tube_count: 试管数量
+            tube_count: 试管数量，如果不指定则使用当前rack的tube_count
 
         Returns:
             float: 总时间(秒)
         """
+        if tube_count is None:
+            tube_count = self._get_current_tube_count()
         return self.collection_time_per_tube * tube_count
 
     def get_collection_progress(self, elapsed_time: float, tube_start_time: float) -> float:
@@ -611,7 +714,8 @@ class TubeCollectionManager:
         current_tube_remaining = max(0, self.collection_time_per_tube - current_tube_elapsed)
 
         # 剩余试管时间
-        remaining_tubes = max(0, 40 - current_tube_id)
+        max_tube_count = self._get_current_tube_count()
+        remaining_tubes = max(0, max_tube_count - current_tube_id)
         remaining_tubes_time = remaining_tubes * self.collection_time_per_tube
 
         return current_tube_remaining + remaining_tubes_time
@@ -637,12 +741,13 @@ class TubeCollectionManager:
         Returns:
             Dict: 状态信息
         """
+        max_tube_count = self._get_current_tube_count()
         return {
             "flow_rate_ml_min": self.flow_rate,
             "collection_volume_ml": self.collection_volume,
             "collection_time_per_tube_sec": self.collection_time_per_tube,
             "total_collection_time_sec": self.get_total_collection_time(),
-            "max_tube_count": 40
+            "max_tube_count": max_tube_count
         }
 
     def __repr__(self):

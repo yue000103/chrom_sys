@@ -6,7 +6,8 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Dict, Any, Optional
-
+import sqlite3
+import os
 
 from hardware.hardware_config import (
     hardware_manager,
@@ -94,17 +95,70 @@ async def get_all_devices_status():
         global_mock = get_global_mock_mode()
         devices = {}
 
-        # 获取所有设备的mock模式状态
-        for device_id, config in hardware_manager.device_configs.items():
-            devices[device_id] = {
-                "mock": config.mock_mode,
-                "mode": "mock" if config.mock_mode else "online"
-            }
+        # 从数据库读取所有设备配置
+        db_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "database", "chromatography.db")
+
+        if os.path.exists(db_path):
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+
+            try:
+                # 获取所有设备配置
+                cursor.execute("SELECT device_id, device_name, device_type, status, is_mock FROM device_config")
+                db_devices = cursor.fetchall()
+
+                for device_id, device_name, device_type, status, is_mock in db_devices:
+                    # 检查是否有特定的mock模式配置
+                    device_mock = hardware_manager.get_device_mock_mode(device_id)
+
+                    devices[device_id] = {
+                        "device_name": device_name,
+                        "device_type": device_type,
+                        "status": status,
+                        "mock": device_mock,
+                        "mode": "mock" if device_mock else "online",
+                        "db_is_mock": bool(is_mock)  # 数据库中的默认mock状态
+                    }
+
+                # 同时包含从device_mapping表获取的设备信息
+                cursor.execute("SELECT device_code, controller_type, physical_id, device_description, is_active FROM device_mapping WHERE is_active = 1")
+                mapping_devices = cursor.fetchall()
+
+                for device_code, controller_type, physical_id, device_description, is_active in mapping_devices:
+                    if device_code not in devices:  # 避免重复
+                        device_mock = hardware_manager.get_device_mock_mode(device_code)
+                        devices[device_code] = {
+                            "device_name": device_description or device_code,
+                            "device_type": controller_type,
+                            "physical_id": physical_id,
+                            "status": "active" if is_active else "inactive",
+                            "mock": device_mock,
+                            "mode": "mock" if device_mock else "online",
+                            "source": "device_mapping"
+                        }
+
+            except Exception as e:
+                # 如果数据库查询失败，回退到原来的方法
+                for device_id, config in hardware_manager.device_configs.items():
+                    devices[device_id] = {
+                        "mock": config.mock_mode,
+                        "mode": "mock" if config.mock_mode else "online"
+                    }
+            finally:
+                conn.close()
+        else:
+            # 如果数据库不存在，使用内存中的配置
+            for device_id, config in hardware_manager.device_configs.items():
+                devices[device_id] = {
+                    "mock": config.mock_mode,
+                    "mode": "mock" if config.mock_mode else "online"
+                }
 
         return {
             "global_mock": global_mock,
             "global_mode": "mock" if global_mock else "online",
-            "devices": devices
+            "devices": devices,
+            "device_count": len(devices)
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

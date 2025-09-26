@@ -17,7 +17,7 @@ from .column_management import router as column_management_router
 from .smiles_management import router as smiles_management_router
 
 # 创建主路由器
-main_router = APIRouter(prefix="/api/v1")
+main_router = APIRouter(prefix="/api")
 
 # 注册各个模块的路由
 main_router.include_router(function_control_router, tags=["功能控制"])

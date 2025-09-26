@@ -317,7 +317,7 @@ export default {
         const fetchSmiles = async () => {
             loading.value = true;
             try {
-                const response = await fetch("http://0.0.0.0:8008/api/smiles");
+                const response = await fetch("http://0.0.0.0:8008/api/smiles/");
                 if (response.ok) {
                     const data = await response.json();
                     if (data.success && data.smiles_list) {

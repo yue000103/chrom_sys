@@ -112,7 +112,6 @@
                         stripe
                         style="width: 100%"
                     >
-
                         <el-table-column
                             prop="name"
                             label="方法名称"
@@ -253,11 +252,23 @@
                         <el-switch
                             v-model="experimentData.pretreatment.purgeSystem"
                         />
+                        <div style="margin-top: 8px">
+                            <el-text type="info" size="small">
+                                <el-icon><InfoFilled /></el-icon>
+                                系统管路吹扫，清除残留样品和气泡，确保分离效果
+                            </el-text>
+                        </div>
                     </el-form-item>
                     <el-form-item label="吹扫柱子">
                         <el-switch
                             v-model="experimentData.pretreatment.purgeColumn"
                         />
+                        <div style="margin-top: 8px">
+                            <el-text type="info" size="small">
+                                <el-icon><InfoFilled /></el-icon>
+                                吹扫柱子，去除杂质，恢复柱子分离性能
+                            </el-text>
+                        </div>
                     </el-form-item>
                     <el-form-item
                         v-if="experimentData.pretreatment.purgeColumn"
@@ -269,14 +280,14 @@
                             :max="60"
                         />
                     </el-form-item>
-                    <el-form-item label="柱平衡">
+                    <el-form-item label="润柱">
                         <el-switch
                             v-model="experimentData.pretreatment.columnBalance"
                         />
                     </el-form-item>
                     <el-form-item
                         v-if="experimentData.pretreatment.columnBalance"
-                        label="平衡时长 (min)"
+                        label="润柱时长 (min)"
                     >
                         <el-input-number
                             v-model="experimentData.pretreatment.balanceTime"
@@ -306,7 +317,6 @@
 
             <!-- 步骤4: 确认创建 -->
             <div v-if="currentStep === 3" class="step-content">
-                <h3>{{ isEditMode ? "确认修改信息" : "确认实验信息" }}</h3>
                 <div class="experiment-summary">
                     <el-card>
                         <h4>{{ experimentData.name }}</h4>
@@ -379,7 +389,7 @@
                                     >
                                 </div>
                                 <div class="summary-item">
-                                    <label>柱平衡:</label>
+                                    <label>润柱:</label>
                                     <span>{{
                                         experimentData.pretreatment
                                             .columnBalance
@@ -394,7 +404,7 @@
                                             .columnBalance
                                     "
                                 >
-                                    <label>平衡时长:</label>
+                                    <label>润柱时长:</label>
                                     <span
                                         >{{
                                             experimentData.pretreatment
@@ -547,7 +557,7 @@ export default {
                         props.experimentData.scheduled_start_time || null,
                 };
             } else {
-                // 创建模式：使用默认数据
+                // 创建模式：空白状态，只有时间戳作为默认名称
                 return {
                     name: `实验-${new Date()
                         .toISOString()
@@ -556,21 +566,21 @@ export default {
                         .replace("T", "-")}`,
                     description: "",
                     experimentDescription: "",
-                    operator: "当前用户",
+                    operator: "",
                     methodId: null,
                     type: "standard",
                     pretreatment: {
                         purgeSystem: false,
-                        purgeColumn: true,
+                        purgeColumn: false,
                         purgeTime: 5,
-                        columnBalance: true,
+                        columnBalance: false,
                         balanceTime: 10,
                         conditioningSolution: 1,
                     },
-                    isPeakDriven: true,
-                    collectionVolume: 5.0,
-                    washVolume: 2.0,
-                    washCycles: 1,
+                    isPeakDriven: false,
+                    collectionVolume: null,
+                    washVolume: null,
+                    washCycles: null,
                     scheduledTime: null,
                 };
             }
@@ -718,7 +728,6 @@ export default {
         const getSelectedMethodName = () => {
             return selectedMethod.value ? selectedMethod.value.name : "未选择";
         };
-
 
         const selectMethod = (row) => {
             experimentData.value.methodId = row.id;

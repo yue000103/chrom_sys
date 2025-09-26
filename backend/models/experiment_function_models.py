@@ -62,6 +62,10 @@ class ExperimentProgress(BaseModel):
     detector_signal_cache: List[List[float]] = Field(default_factory=list)  # [[1.73427, 2.61003], [1.8, 2.5], ...]
     signal_collection_active: bool = False  # 是否正在收集信号数据
 
+    # 暂停恢复时间管理字段
+    pause_experiment_time: Optional[float] = None  # 暂停时的实验时间点
+    pause_real_time: Optional[float] = None  # 暂停时的现实时间戳
+
     class Config:
         arbitrary_types_allowed = True
 

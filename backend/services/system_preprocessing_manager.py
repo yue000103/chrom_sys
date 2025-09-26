@@ -90,12 +90,13 @@ class SystemPreprocessingManager:
             logger.info(f"检测器波长设置成功: {wavelength}nm")
 
             # 3. 设置四元泵流速
-            for pump_id, flow_rate in flow_rates.items():
-                flow_rate_set = await self.pump_controller.set_flow_rate(pump_id, flow_rate)
-                if not flow_rate_set:
-                    logger.error(f"设置泵{pump_id}流速失败: {flow_rate} mL/min")
-                    return False
-                logger.info(f"泵{pump_id}流速设置成功: {flow_rate} mL/min")
+            # 计算总流速（四元泵的总流速）
+            total_flow_rate = sum(flow_rates.values())
+            flow_rate_set = await self.pump_controller.set_flow_rate(total_flow_rate)
+            if not flow_rate_set:
+                logger.error(f"设置泵总流速失败: {total_flow_rate} mL/min")
+                return False
+            logger.info(f"泵总流速设置成功: {total_flow_rate} mL/min")
 
 
             # 5. 检测气泡传感器状态
@@ -236,6 +237,21 @@ class SystemPreprocessingManager:
                 logger.error("设置柱平衡梯度失败")
                 return
 
+            # 1. 双1（高压电磁阀）开启
+            dual1_on = await self.relay_controller.control_relay('双1', 'on')
+            if not dual1_on:
+                logger.error("开启双1（高压电磁阀）失败")
+                return
+            logger.info("双1（高压电磁阀）开启成功")
+
+            # 3. 多9开到通道5
+            valve9_set = await self.multi_valve.set_position('多9', 5)
+            if not valve9_set:
+                logger.error("设置多9到通道5失败")
+                return
+            logger.info("多9设置到通道5成功")
+
+
             # 3. 启动泵系统
             pumps_to_start = ['A']  # 默认启动A泵
             if conditioning_solution == 2:
@@ -267,6 +283,13 @@ class SystemPreprocessingManager:
                     logger.info(f"泵{pump_id}停止成功")
 
             logger.info("柱平衡完成")
+
+            # 关闭双1（高压电磁阀）
+            dual1_off = await self.relay_controller.control_relay('双1', 'off')
+            if not dual1_off:
+                logger.warning("关闭双1（高压电磁阀）失败")
+            else:
+                logger.info("双1（高压电磁阀）关闭成功")
 
             # 发布完成消息
             if self.mqtt_manager:

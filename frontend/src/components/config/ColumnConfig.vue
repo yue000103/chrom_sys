@@ -308,7 +308,7 @@ export default {
         const fetchColumns = async () => {
             loading.value = true;
             try {
-                const response = await fetch("http://0.0.0.0:8008/api/columns");
+                const response = await fetch("http://0.0.0.0:8008/api/columns/");
                 if (response.ok) {
                     const data = await response.json();
                     if (data.success && data.columns) {

@@ -41,19 +41,17 @@ class PumpController:
         """连接泵控制器"""
         return await self._open_serial_port()
     
-    async def set_flow_rate(self, pump_id: str, flow_rate: float) -> bool:
+    async def set_flow_rate(self, flow_rate: float) -> bool:
         """
         设置流速
-        :param pump_id: 泵ID(A/B/C/D)
         :param flow_rate: 流速(mL/min)
         :return: 设置结果
         """
-        if pump_id not in self.pumps:
-            return False
-
         if self.mock:
             if 0 <= flow_rate <= 1000:  # 扩大流速范围
-                self.pumps[pump_id]['flow_rate'] = flow_rate
+                # 在mock模式下，设置所有泵的流速
+                for pump_id in self.pumps:
+                    self.pumps[pump_id]['flow_rate'] = flow_rate
                 await asyncio.sleep(0.1)
                 return True
             return False
@@ -67,11 +65,13 @@ class PumpController:
                 response = await self._send_command(full_command)
 
                 if response == b'#':
-                    self.pumps[pump_id]['flow_rate'] = flow_rate
+                    # 设置成功后更新所有泵的流速
+                    for pump_id in self.pumps:
+                        self.pumps[pump_id]['flow_rate'] = flow_rate
                     return True
                 return False
             except Exception as e:
-                print(f"设置{pump_id}泵流速失败: {e}")
+                print(f"设置泵流速失败: {e}")
                 return False
     
     async def set_gradient(self, gradient_profile: Dict[str, Any]) -> bool:
