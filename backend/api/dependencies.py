@@ -63,8 +63,7 @@ def get_data_manager() -> ExperimentDataManager:
     global _data_manager
     if _data_manager is None:
         mqtt = get_mqtt_manager()
-        db = get_db_manager()
-        _data_manager = ExperimentDataManager(mqtt, db)
+        _data_manager = ExperimentDataManager(mqtt)
     return _data_manager
 
 

@@ -145,24 +145,31 @@ async def start_experiment(
 
         # 获取实验管理器
         exp_manager = get_experiment_manager()
+        print("--------------2---------------:")
+
 
         # 检查系统是否忙碌
         if exp_manager.is_experiment_running():
             raise HTTPException(status_code=400, detail="系统正在运行其他实验，无法启动新实验")
-
+        print("--------------3---------------:",experiment_id,experiment.get('experiment_name', f'实验_{experiment_id}'),
+              str(experiment.get('method_id', '')),experiment.get('priority', 1))
         # 创建实验配置
         config = ExperimentConfig(
             experiment_id=str(experiment_id),
             experiment_name=experiment.get('experiment_name', f'实验_{experiment_id}'),
             method_id=str(experiment.get('method_id', '')),
-            sample_id=str(experiment.get('sample_id', '')),
-            user_id=experiment.get('created_by', 'system'),
+            sample_id=str(experiment.get('sample_id', 'default_sample')),
+            user_id=experiment.get('operator', 'system'),
             priority=experiment.get('priority', 1),
-            notes=experiment.get('description', '')
+            notes=experiment.get('description', ''),
+            collection_volume_ml=experiment.get('collection_volume_ml', 10.0)
         )
+        print("--------------4--------------:",config)
 
         # 启动实验
         progress = await exp_manager.start_experiment(config)
+        print("--------------5---------------:")
+
 
         # 更新数据库状态
         affected = db.update_data(
@@ -174,6 +181,8 @@ async def start_experiment(
             "experiment_id = ?",
             (experiment_id,)
         )
+        print("--------------4---------------:")
+
 
         if affected == 0:
             # 如果数据库更新失败，尝试停止已启动的实验

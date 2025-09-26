@@ -772,11 +772,18 @@ export default {
 
         // 当前进度
         const currentProgress = computed(() => {
-            if (!currentExperiment.value) return 0;
-            const elapsed =
-                Date.now() - currentExperiment.value.startTime.getTime();
-            const total = currentExperiment.value.estimatedDuration * 60 * 1000;
-            return Math.min(Math.round((elapsed / total) * 100), 100);
+            if (!currentExperiment.value || !currentExperiment.value.startTime) return 0;
+            try {
+                const startTime = currentExperiment.value.startTime instanceof Date
+                    ? currentExperiment.value.startTime
+                    : new Date(currentExperiment.value.startTime);
+                const elapsed = Date.now() - startTime.getTime();
+                const total = currentExperiment.value.estimatedDuration * 60 * 1000;
+                return Math.min(Math.round((elapsed / total) * 100), 100);
+            } catch (error) {
+                console.warn('计算当前进度时出错:', error);
+                return 0;
+            }
         });
 
         // 进度状态
@@ -788,22 +795,36 @@ export default {
 
         // 已运行时间
         const elapsedTime = computed(() => {
-            if (!currentExperiment.value) return "0分钟";
-            const elapsed =
-                Date.now() - currentExperiment.value.startTime.getTime();
-            const minutes = Math.floor(elapsed / (60 * 1000));
-            return `${minutes}分钟`;
+            if (!currentExperiment.value || !currentExperiment.value.startTime) return "0分钟";
+            try {
+                const startTime = currentExperiment.value.startTime instanceof Date
+                    ? currentExperiment.value.startTime
+                    : new Date(currentExperiment.value.startTime);
+                const elapsed = Date.now() - startTime.getTime();
+                const minutes = Math.floor(elapsed / (60 * 1000));
+                return `${minutes}分钟`;
+            } catch (error) {
+                console.warn('计算已运行时间时出错:', error);
+                return "0分钟";
+            }
         });
 
         // 剩余时间
         const remainingTime = computed(() => {
-            if (!currentExperiment.value) return "0分钟";
-            const elapsed =
-                Date.now() - currentExperiment.value.startTime.getTime();
-            const total = currentExperiment.value.estimatedDuration * 60 * 1000;
-            const remaining = Math.max(0, total - elapsed);
-            const minutes = Math.floor(remaining / (60 * 1000));
-            return `${minutes}分钟`;
+            if (!currentExperiment.value || !currentExperiment.value.startTime) return "0分钟";
+            try {
+                const startTime = currentExperiment.value.startTime instanceof Date
+                    ? currentExperiment.value.startTime
+                    : new Date(currentExperiment.value.startTime);
+                const elapsed = Date.now() - startTime.getTime();
+                const total = currentExperiment.value.estimatedDuration * 60 * 1000;
+                const remaining = Math.max(0, total - elapsed);
+                const minutes = Math.floor(remaining / (60 * 1000));
+                return `${minutes}分钟`;
+            } catch (error) {
+                console.warn('计算剩余时间时出错:', error);
+                return "0分钟";
+            }
         });
 
         const getStatusType = (status) => {
@@ -868,25 +889,49 @@ export default {
 
         const getExperimentProgress = (experiment) => {
             if (!experiment.startTime) return 0;
-            const elapsed = Date.now() - experiment.startTime.getTime();
-            const total = parseInt(experiment.estimatedTime) * 60 * 1000;
-            return Math.min(Math.round((elapsed / total) * 100), 100);
+            try {
+                const startTime = experiment.startTime instanceof Date
+                    ? experiment.startTime
+                    : new Date(experiment.startTime);
+                const elapsed = Date.now() - startTime.getTime();
+                const total = parseInt(experiment.estimatedTime) * 60 * 1000;
+                return Math.min(Math.round((elapsed / total) * 100), 100);
+            } catch (error) {
+                console.warn('计算实验进度时出错:', error);
+                return 0;
+            }
         };
 
         const getElapsedTime = (experiment) => {
             if (!experiment.startTime) return "0分钟";
-            const elapsed = Date.now() - experiment.startTime.getTime();
-            const minutes = Math.floor(elapsed / (60 * 1000));
-            return `${minutes}分钟`;
+            try {
+                const startTime = experiment.startTime instanceof Date
+                    ? experiment.startTime
+                    : new Date(experiment.startTime);
+                const elapsed = Date.now() - startTime.getTime();
+                const minutes = Math.floor(elapsed / (60 * 1000));
+                return `${minutes}分钟`;
+            } catch (error) {
+                console.warn('计算实验已运行时间时出错:', error);
+                return "0分钟";
+            }
         };
 
         const getRemainingTime = (experiment) => {
             if (!experiment.startTime) return experiment.estimatedTime;
-            const elapsed = Date.now() - experiment.startTime.getTime();
-            const total = parseInt(experiment.estimatedTime) * 60 * 1000;
-            const remaining = Math.max(0, total - elapsed);
-            const minutes = Math.floor(remaining / (60 * 1000));
-            return `${minutes}分钟`;
+            try {
+                const startTime = experiment.startTime instanceof Date
+                    ? experiment.startTime
+                    : new Date(experiment.startTime);
+                const elapsed = Date.now() - startTime.getTime();
+                const total = parseInt(experiment.estimatedTime) * 60 * 1000;
+                const remaining = Math.max(0, total - elapsed);
+                const minutes = Math.floor(remaining / (60 * 1000));
+                return `${minutes}分钟`;
+            } catch (error) {
+                console.warn('计算实验剩余时间时出错:', error);
+                return experiment.estimatedTime || "0分钟";
+            }
         };
 
         const createQuickExperiment = (method) => {
@@ -1216,7 +1261,7 @@ export default {
         // 调用后端API开始实验
         const startExperimentAPI = async (experimentId) => {
             const response = await fetch(
-                `http://0.0.0.0:8008/api/experiments/data/collection/start?experiment_id=${experimentId}`,
+                `http://localhost:8008/api/experiments/start/${experimentId}`,
                 {
                     method: "POST",
                     headers: {
@@ -1241,7 +1286,7 @@ export default {
         const fetchExperimentSteps = async (experimentId) => {
             console.log("开始获取实验步骤, experimentId:", experimentId);
             try {
-                const url = `http://0.0.0.0:8008/api/v1/experiment_mgmt/${experimentId}/steps`;
+                const url = `http://0.0.0.0:8008/api/experiment_mgmt/${experimentId}/steps`;
                 console.log("请求URL:", url);
 
                 const response = await fetch(url, {
@@ -1347,7 +1392,7 @@ export default {
         // 后端API调用函数
         const pauseExperimentAPI = async (experimentId) => {
             const response = await fetch(
-                `http://0.0.0.0:8008/api/experiments/data/collection/pause?experiment_id=${experimentId}`,
+                `http://localhost:8008/api/experiments/pause/20`,
                 {
                     method: "POST",
                     headers: {
@@ -1370,7 +1415,7 @@ export default {
 
         const resumeExperimentAPI = async (experimentId) => {
             const response = await fetch(
-                `http://0.0.0.0:8008/api/experiments/data/collection/resume?experiment_id=${experimentId}`,
+                `http://localhost:8008/api/experiments/resume/20`,
                 {
                     method: "POST",
                     headers: {
@@ -1540,7 +1585,7 @@ export default {
 
         const terminateExperimentAPI = async (experimentId) => {
             const response = await fetch(
-                `http://0.0.0.0:8008/api/experiments/data/collection/terminate?experiment_id=${experimentId}`,
+                `http://localhost:8008/api/experiments/terminate/20`,
                 {
                     method: "POST",
                     headers: {

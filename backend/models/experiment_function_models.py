@@ -31,12 +31,13 @@ class ExperimentConfig(BaseModel):
     experiment_id: str
     experiment_name: str
     method_id: str
-    sample_id: str
-    user_id: str
+    sample_id: Optional[str] = "default_sample"
+    user_id: Optional[str] = "system"
     priority: int = Field(default=1, ge=1, le=5)  # 1-5优先级
     created_at: datetime = Field(default_factory=datetime.now)
     scheduled_start: Optional[datetime] = None
     notes: Optional[str] = None
+    collection_volume_ml: Optional[float] = Field(default=10.0, description="收集体积(ml)")
 
 
 class ExperimentProgress(BaseModel):

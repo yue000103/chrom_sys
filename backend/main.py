@@ -6,8 +6,10 @@ from pathlib import Path
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 import asyncio
 from datetime import datetime
@@ -167,6 +169,39 @@ async def lifespan(app: FastAPI):
     print("=" * 60)
 
 app = FastAPI(title="液相色谱仪控制系统", version="1.0.0", lifespan=lifespan)
+
+# 添加422验证错误的详细处理
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    logger.error("=== 422 请求验证错误详细信息 ===")
+    logger.error(f"请求URL: {request.url}")
+    logger.error(f"请求方法: {request.method}")
+    logger.error(f"请求头: {dict(request.headers)}")
+
+    # 直接从异常对象获取请求体，避免重复读取
+    try:
+        body_info = exc.body if hasattr(exc, 'body') else "无法获取请求体"
+        logger.error(f"请求体: {body_info}")
+    except Exception as e:
+        logger.error(f"获取请求体失败: {e}")
+
+    logger.error(f"验证错误详情: {exc.errors()}")
+    logger.error("=== 验证错误信息结束 ===")
+
+    return JSONResponse(
+        status_code=422,
+        content={
+            "detail": exc.errors(),
+            "body": getattr(exc, 'body', None),
+            "message": "请求数据验证失败",
+            "url": str(request.url),
+            "method": request.method,
+            "debug_info": {
+                "error_count": len(exc.errors()),
+                "first_error": exc.errors()[0] if exc.errors() else None
+            }
+        }
+    )
 
 # HTTP 请求日志中间件
 @app.middleware("http")

@@ -21,9 +21,9 @@ main_router = APIRouter(prefix="/api")
 
 # 注册各个模块的路由
 main_router.include_router(function_control_router, tags=["功能控制"])
-main_router.include_router(method_control_router, tags=["方法控制"])
+main_router.include_router(method_control_router, prefix="/methods", tags=["方法控制"])
 main_router.include_router(tube_control_router, prefix="/tubes", tags=["试管控制"])
-main_router.include_router(experiment_data_router, prefix="/experiments", tags=["实验管理"])
+main_router.include_router(experiment_data_router, prefix="/experiments", tags=["实验11管理"])
 main_router.include_router(rack_info_router, prefix="/racks", tags=["试管架管理"])
 main_router.include_router(experiment_management_router, prefix="/experiment_mgmt", tags=["实验数据管理"])
 main_router.include_router(valve_path_router, prefix="/valve-paths", tags=["阀门路径管理"])

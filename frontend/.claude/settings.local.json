@@ -7,7 +7,11 @@
       "Bash(python:*)",
       "Bash(sqlite3:*)",
       "Bash(curl:*)",
-      "Bash(npm run build:*)"
+      "Bash(npm run build:*)",
+      "Read(//f/project/chrom_sys/backend/api/**)",
+      "Read(//f/project/chrom_sys/backend/models/**)",
+      "Read(//f/project/chrom_sys/backend/services/**)",
+      "Read(//f/project/chrom_sys/backend/**)"
     ],
     "deny": [],
     "ask": []

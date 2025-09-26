@@ -103,8 +103,26 @@
                             <p>{{ experimentData.methodId || "未指定方法" }}</p>
                         </div>
                     </div>
+                    <!-- 加载状态 -->
+                    <div v-if="methodsLoading" class="loading-container">
+                        <el-loading
+                            element-loading-text="加载方法列表中..."
+                            element-loading-background="rgba(0, 0, 0, 0.8)"
+                        >
+                            <div style="height: 300px;"></div>
+                        </el-loading>
+                    </div>
+
+                    <!-- 无数据状态 -->
+                    <div v-else-if="!methodsLoading && availableMethods.length === 0" class="empty-state">
+                        <el-empty description="暂无可用方法">
+                            <el-button type="primary" @click="fetchMethods">重新加载</el-button>
+                        </el-empty>
+                    </div>
+
+                    <!-- 方法表格 -->
                     <el-table
-                        v-else
+                        v-else-if="!isEditMode"
                         :data="paginatedMethods"
                         @row-click="selectMethod"
                         highlight-current-row
@@ -135,7 +153,7 @@
 
                         <el-table-column
                             prop="channelA"
-                            label="A通道波长"
+                            label="检测波长"
                             width="120"
                             align="center"
                         >
@@ -147,32 +165,26 @@
                         </el-table-column>
 
                         <el-table-column
-                            prop="channelB"
-                            label="B通道波长"
-                            width="120"
+                            prop="gradientMode"
+                            label="梯度模式"
+                            width="100"
                             align="center"
                         >
                             <template #default="scope">
-                                <el-tag type="success" size="small">
-                                    {{ scope.row.channelB || 280 }}nm
+                                <el-tag :type="scope.row.gradientMode === '自动' ? 'success' : 'info'" size="small">
+                                    {{ scope.row.gradientMode }}
                                 </el-tag>
                             </template>
                         </el-table-column>
 
                         <el-table-column
-                            prop="smiles"
-                            label="SMILES"
-                            width="150"
-                            show-overflow-tooltip
+                            prop="originalData.column_id"
+                            label="色谱柱ID"
+                            width="100"
+                            align="center"
                         >
                             <template #default="scope">
-                                <el-text
-                                    class="smiles-text"
-                                    v-if="scope.row.smiles"
-                                >
-                                    {{ scope.row.smiles }}
-                                </el-text>
-                                <span v-else class="no-data">-</span>
+                                <span>{{ scope.row.originalData?.column_id || '-' }}</span>
                             </template>
                         </el-table-column>
 
@@ -500,7 +512,8 @@
 </template>
 
 <script>
-import { ref, computed } from "vue";
+import { ref, computed, onMounted } from "vue";
+import { ElMessage } from "element-plus";
 import { InfoFilled } from "@element-plus/icons-vue";
 
 export default {
@@ -589,73 +602,85 @@ export default {
         const experimentData = ref(initializeExperimentData());
 
         // 可用方法列表
-        const availableMethods = ref([
-            {
-                id: 1,
-                name: "标准分析方法-01",
-                description: "用于蛋白质分离的标准方法",
-                isFavorite: true,
-                flowRate: 1.0,
-                runTime: 30,
-                channelA: 254,
-                channelB: 280,
-                smiles: "CN1C=NC2=C1C(=O)N(C(=O)N2C)C",
-                collectionVolume: 5.0,
-                gradientMode: "自动",
-            },
-            {
-                id: 2,
-                name: "快速检测方法",
-                description: "用于快速样品筛选",
-                isFavorite: false,
-                flowRate: 1.5,
-                runTime: 15,
-                channelA: 280,
-                channelB: 254,
-                smiles: "C1=CC=C(C=C1)C(=O)O",
-                collectionVolume: 3.0,
-                gradientMode: "手动",
-            },
-            {
-                id: 3,
-                name: "高分辨分离方法",
-                description: "用于复杂样品的高分辨分离",
-                isFavorite: true,
-                flowRate: 0.8,
-                runTime: 60,
-                channelA: 254,
-                channelB: 280,
-                smiles: "C1=CC=C(C(=C1)C(=O)O)O",
-                collectionVolume: 8.0,
-                gradientMode: "自动",
-            },
-            {
-                id: 4,
-                name: "维生素C分析方法",
-                description: "专用于维生素C检测",
-                isFavorite: false,
-                flowRate: 1.2,
-                runTime: 25,
-                channelA: 245,
-                channelB: 280,
-                smiles: "C(C(C(C(=C(C(=O)O)O)O)O)O)O",
-                collectionVolume: 4.0,
-                gradientMode: "自动",
-            },
-            {
-                id: 5,
-                name: "苯酚类分析方法",
-                description: "适用于苯酚类化合物分离",
-                isFavorite: true,
-                flowRate: 1.1,
-                runTime: 40,
-                channelA: 270,
-                channelB: 254,
-                smiles: "C1=CC=C(C=C1)O",
-                collectionVolume: 6.0,
-                gradientMode: "自动",
-            },
-        ]);
+        const availableMethods = ref([]);
+        const methodsLoading = ref(false);
+
+        // 获取方法列表
+        const fetchMethods = async () => {
+            methodsLoading.value = true;
+            try {
+                const response = await fetch('http://localhost:8008/api/methods/?limit=50');
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const data = await response.json();
+
+                if (data.success && data.methods) {
+                    // 将API数据映射为组件需要的格式
+                    availableMethods.value = data.methods.map(method => {
+                        // 安全地提取波长信息
+                        let wavelengthA = 254, wavelengthB = 280;
+                        if (method.detector_wavelength) {
+                            const wavelengthStr = Array.isArray(method.detector_wavelength)
+                                ? method.detector_wavelength[0]
+                                : method.detector_wavelength;
+                            const wavelengthNum = typeof wavelengthStr === 'string'
+                                ? parseInt(wavelengthStr.replace(/[^0-9]/g, ''))
+                                : wavelengthStr;
+                            wavelengthA = wavelengthNum || 254;
+                            wavelengthB = wavelengthA + 26; // 默认B通道比A通道高26nm
+                        }
+
+                        return {
+                            id: method.method_id,
+                            name: method.method_name || '未命名方法',
+                            description: `${method.gradient_elution_mode === 'auto' ? '自动梯度' : '手动梯度'}方法`,
+                            isFavorite: false, // 可以根据需要调整
+                            flowRate: method.flow_rate_ml_min || 1.0,
+                            runTime: method.run_time_min || 30,
+                            channelA: wavelengthA,
+                            channelB: wavelengthB,
+                            smiles: '', // 可以根据需要从其他接口获取
+                            collectionVolume: 5.0, // 默认值，可以根据需要调整
+                            gradientMode: method.gradient_elution_mode === 'auto' ? '自动' : '手动',
+                            // 保留原始API数据
+                            originalData: method
+                        };
+                    });
+
+                    console.log('获取方法列表成功:', availableMethods.value.length);
+                } else {
+                    throw new Error(data.message || '获取方法列表失败');
+                }
+            } catch (error) {
+                console.error('获取方法列表失败:', error);
+                ElMessage.error({
+                    message: `获取方法列表失败: ${error.message}`,
+                    duration: 5000
+                });
+
+                // 如果API调用失败，使用示例数据作为后备
+                if (process.env.NODE_ENV === 'development') {
+                    availableMethods.value = [
+                        {
+                            id: 1,
+                            name: "标准分析方法-01(演示数据)",
+                            description: "用于蛋白质分离的标准方法",
+                            isFavorite: true,
+                            flowRate: 1.0,
+                            runTime: 30,
+                            channelA: 254,
+                            channelB: 280,
+                            smiles: "CN1C=NC2=C1C(=O)N(C(=O)N2C)C",
+                            collectionVolume: 5.0,
+                            gradientMode: "自动",
+                        }
+                    ];
+                }
+            } finally {
+                methodsLoading.value = false;
+            }
+        };
 
         const selectedMethodInfo = ref(null);
 
@@ -764,10 +789,17 @@ export default {
             emit("save", experimentToSave);
         };
 
+        // 组件挂载时获取方法列表
+        onMounted(() => {
+            fetchMethods();
+        });
+
         return {
             currentStep,
             experimentData,
             availableMethods,
+            methodsLoading,
+            fetchMethods,
             selectedMethodInfo,
             selectedMethod,
             currentPage,
@@ -867,6 +899,17 @@ export default {
 
 :deep(.el-table__row) {
     cursor: pointer;
+}
+
+/* 加载和空状态样式 */
+.loading-container {
+    position: relative;
+    min-height: 300px;
+}
+
+.empty-state {
+    padding: 40px 0;
+    text-align: center;
 }
 
 :deep(.el-table__row:hover) {

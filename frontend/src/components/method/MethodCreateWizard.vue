@@ -50,15 +50,33 @@
             <div v-if="currentStep === 1" class="step-content">
                 <h3>色谱参数</h3>
                 <el-form :model="methodData" label-width="200px">
-                    <el-form-item label="柱子选择" required>
+                    <el-form-item label="色谱柱" required>
                         <el-select
-                            v-model="methodData.column"
-                            placeholder="选择柱子"
+                            v-model="methodData.column_id"
+                            placeholder="请选择色谱柱"
+                            style="width: 100%"
+                            :loading="columnsLoading"
+                            filterable
                         >
-                            <el-option label="C18-150mm" value="C18-150mm" />
-                            <el-option label="C18-250mm" value="C18-250mm" />
-                            <el-option label="C8-100mm" value="C8-100mm" />
+                            <el-option
+                                v-for="column in columns"
+                                :key="column.column_id"
+                                :label="`${column.column_code} (${column.specification_g}g, ${column.column_volume_cv_ml}mL)`"
+                                :value="column.column_id"
+                            >
+                                <div class="column-option">
+                                    <span class="column-code">{{ column.column_code }}</span>
+                                    <span class="column-spec">{{ column.specification_g }}g | {{ column.column_volume_cv_ml }}mL</span>
+                                </div>
+                            </el-option>
                         </el-select>
+                        <div class="form-help-text" v-if="selectedColumn">
+                            <el-text type="info" size="small">
+                                最大压力: {{ selectedColumn.max_pressure_bar }}bar |
+                                推荐流速: {{ selectedColumn.flow_rate_ml_min }}mL/min |
+                                样品载量: {{ selectedColumn.sample_load_amount }}
+                            </el-text>
+                        </div>
                     </el-form-item>
                     <el-form-item label="流速 (mL/min)" required>
                         <el-input-number
@@ -440,8 +458,8 @@
                         <el-divider />
                         <div class="summary-grid">
                             <div class="summary-item">
-                                <label>柱子:</label>
-                                <span>{{ methodData.column }}</span>
+                                <label>色谱柱:</label>
+                                <span>{{ getColumnDisplayName(methodData.column_id) }}</span>
                             </div>
                             <div class="summary-item">
                                 <label>流速(mL/min):</label>
@@ -655,6 +673,8 @@ export default {
 
         // 参数解释弹窗状态
         const showParamHelp = ref(false);
+        const columns = ref([]);
+        const columnsLoading = ref(false);
 
         // 参数解释数据
         const paramHelp = {
@@ -714,7 +734,7 @@ export default {
             name: generateDefaultMethodName(),
             smlies: "",
             type: "user",
-            column: "",
+            column_id: null,
             flowRate: 1.0,
             runTime: 30,
             wavelengthA: 254,
@@ -867,6 +887,45 @@ export default {
             console.log("已加载Smlies列表", smliesList.value.length, "项");
         };
 
+        // 获取色谱柱列表
+        const fetchColumns = async () => {
+            columnsLoading.value = true;
+            try {
+                const response = await fetch('http://localhost:8008/api/columns/');
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const data = await response.json();
+                if (data.success && data.columns) {
+                    columns.value = data.columns;
+                    console.log('获取色谱柱列表成功:', columns.value.length);
+                } else {
+                    throw new Error(data.message || '获取色谱柱列表失败');
+                }
+            } catch (error) {
+                console.error('获取色谱柱列表失败:', error);
+                ElMessage.error({
+                    message: `获取色谱柱列表失败: ${error.message}`,
+                    duration: 5000
+                });
+            } finally {
+                columnsLoading.value = false;
+            }
+        };
+
+        // 计算选中的色谱柱信息
+        const selectedColumn = computed(() => {
+            if (!methodData.value.column_id || !columns.value.length) return null;
+            return columns.value.find(col => col.column_id === methodData.value.column_id);
+        });
+
+        // 获取色谱柱显示名称
+        const getColumnDisplayName = (columnId) => {
+            if (!columnId || !columns.value.length) return '未选择';
+            const column = columns.value.find(col => col.column_id === columnId);
+            return column ? `${column.column_code} (${column.specification_g}g)` : `ID: ${columnId}`;
+        };
+
         const saveMethod = () => {
             // 保存前确保新输入的Smlies已添加到列表
             if (
@@ -878,9 +937,10 @@ export default {
             emit("save", methodData.value);
         };
 
-        // 组件挂载时获取Smlies列表
+        // 组件挂载时获取数据
         onMounted(() => {
             fetchSmliesList();
+            fetchColumns();
         });
 
         return {
@@ -890,6 +950,10 @@ export default {
             filteredSmliesList,
             showParamHelp,
             paramHelp,
+            columns,
+            columnsLoading,
+            selectedColumn,
+            getColumnDisplayName,
             nextStep,
             previousStep,
             addGradientStep,
@@ -1058,6 +1122,28 @@ export default {
 
 .param-section-header .gradient-validation-info .el-text {
     font-size: 13px;
+}
+
+/* 色谱柱选项样式 */
+.column-option {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+}
+
+.column-code {
+    font-weight: 600;
+    color: #333;
+}
+
+.column-spec {
+    font-size: 12px;
+    color: #999;
+}
+
+.form-help-text {
+    margin-top: 4px;
 }
 
 </style>

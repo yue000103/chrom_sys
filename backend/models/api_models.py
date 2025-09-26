@@ -273,3 +273,17 @@ class BatchOperationResponse(BaseResponse):
     failed_operations: int
     operation_results: List[Dict[str, Any]] = []
     partial_success: bool = False
+
+
+# === 数据采集API模型 ===
+class DataCollectionStartRequest(BaseModel):
+    """数据采集开始请求模型"""
+    experiment_id: str = Field(..., description="实验ID")
+    collection_config: Dict[str, Any] = Field(default_factory=dict, description="采集配置")
+
+
+class DataCollectionResponse(BaseResponse):
+    """数据采集响应模型"""
+    experiment_id: str
+    started: bool
+    config: Dict[str, Any] = Field(default_factory=dict)

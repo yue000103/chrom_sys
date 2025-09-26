@@ -9,6 +9,11 @@
                     <span class="status-text">系统运行中</span>
                 </div>
                 <div class="status-item">
+                    <span class="status-indicator"
+                        :class="getExperimentStepIndicatorClass()"></span>
+                    <span class="status-text">{{ getExperimentStepDisplayText() }}</span>
+                </div>
+                <div class="status-item">
                     <span
                         class="status-indicator"
                         :class="isPaused ? 'offline' : 'online'"
@@ -637,7 +642,7 @@
                             @click="togglePause"
                         >
                             <el-icon class="btn-icon"><VideoPlay /></el-icon>
-                            <span class="btn-text">开始</span>
+                            <span class="btn-text">{{ getStartButtonText() }}</span>
                         </el-button>
                         <el-button
                             v-else-if="isRunning && !isPaused"
@@ -1309,7 +1314,7 @@
 </template>
 
 <script>
-import { ref, onMounted, onUnmounted, nextTick } from "vue";
+import { ref, computed, onMounted, onUnmounted, nextTick } from "vue";
 import { ArrowDown, Delete, Refresh, Timer, Tools, Setting, Operation, View, Box, Switch, Monitor } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { useRealtimeChart } from "@/composables/useRealtimeChart.js";
@@ -1513,14 +1518,49 @@ export default {
             }
         };
 
+        // 调用实验开始API
+        const startExperimentAPI = async () => {
+            try {
+                const response = await fetch('http://localhost:8008/api/experiments/start/20', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const result = await response.json();
+                console.log('实验开始API调用成功:', result);
+                return result;
+            } catch (error) {
+                console.error('实验开始API调用失败:', error);
+                throw error;
+            }
+        };
+
         // 主要控制方法
-        const togglePause = () => {
+        const togglePause = async () => {
             if (!isRunning.value) {
                 // 如果图表未运行，则开始
-                startChart();
-                isPaused.value = false;
-                console.log("实验已开始");
-                ElMessage.success("实验已开始");
+                try {
+                    // 调用实验开始API
+                    console.log("调用实验开始API: http://localhost:8008/api/experiments/start/20");
+                    await startExperimentAPI();
+                    console.log("实验开始API调用成功");
+
+                    // 启动图表
+                    startChart();
+                    isPaused.value = false;
+                    console.log("实验已开始");
+                    ElMessage.success("实验已开始");
+
+                } catch (error) {
+                    console.error("启动实验失败:", error);
+                    ElMessage.error(`启动实验失败: ${error.message}`);
+                }
             } else if (!isPaused.value) {
                 // 如果图表正在运行且未暂停，则暂停（但保持 isRunning 为 true）
                 // 这里不调用 stopChart()，而是暂停数据更新
@@ -1712,16 +1752,17 @@ export default {
                 const result = await response.json();
                 console.log("设备列表API响应:", result);
 
-                if (result.success && Array.isArray(result.devices)) {
-                    devices.value = result.devices.map(device => ({
+                if (result.devices && typeof result.devices === 'object') {
+                    // 将devices对象转换为数组格式
+                    devices.value = Object.entries(result.devices).map(([deviceId, device]) => ({
                         ...device,
-                        mockMode: device.mock_mode || false,
+                        device_id: deviceId,
+                        mockMode: device.mock || false,
                         updating: false
                     }));
 
-                    // 检查是否所有设备都是mock模式
-                    globalMockMode.value = devices.value.length > 0 &&
-                        devices.value.every(device => device.mockMode);
+                    // 使用API返回的全局mock状态
+                    globalMockMode.value = result.global_mock || false;
 
                     console.log("设备列表设置成功:", devices.value);
                 } else {
@@ -2139,7 +2180,109 @@ export default {
             if (dataUpdateInterval) {
                 clearInterval(dataUpdateInterval);
             }
+            if (experimentInfoUpdateInterval) {
+                clearInterval(experimentInfoUpdateInterval);
+            }
         });
+
+        // 使用ref来跟踪实验状态变化
+        const experimentInfo = ref(null);
+
+        // 获取当前实验状态信息
+        const getCurrentExperimentInfo = () => {
+            try {
+                const savedExperiment = localStorage.getItem('currentExperiment');
+                if (!savedExperiment) {
+                    return null;
+                }
+                return JSON.parse(savedExperiment);
+            } catch (error) {
+                console.error('获取实验状态失败:', error);
+                return null;
+            }
+        };
+
+        // 更新实验信息
+        const updateExperimentInfo = () => {
+            experimentInfo.value = getCurrentExperimentInfo();
+        };
+
+        // 获取实验流程状态显示文本
+        const getExperimentStepDisplayText = () => {
+            const experiment = experimentInfo.value;
+            if (!experiment || !experiment.status) {
+                return '空闲';
+            }
+
+            // 如果是预处理状态，显示具体的预处理步骤
+            if (experiment.status === 'pretreatment' && experiment.currentPretreatmentStep) {
+                const stepNames = {
+                    preprocessing_sequence: '预处理序列',
+                    purge_column: '吹扫柱子',
+                    purge_system: '吹扫系统',
+                    column_equilibration: '柱平衡',
+                };
+                return stepNames[experiment.currentPretreatmentStep] || experiment.currentPretreatmentStep;
+            }
+
+            // 其他状态
+            const statusNames = {
+                pretreatment: '预处理中',
+                running: '正式实验',
+                paused: '已暂停',
+                completed: '已完成',
+                failed: '失败'
+            };
+
+            return statusNames[experiment.status] || '空闲';
+        };
+
+        // 获取实验流程状态指示器的样式类
+        const getExperimentStepIndicatorClass = () => {
+            const experiment = experimentInfo.value;
+            if (!experiment || !experiment.status) {
+                return 'offline'; // 空闲状态显示灰色
+            }
+
+            // 根据实验状态返回不同的颜色
+            switch (experiment.status) {
+                case 'pretreatment':
+                case 'running':
+                    return 'online'; // 运行中显示绿色
+                case 'paused':
+                    return 'warning'; // 暂停显示橙色
+                case 'failed':
+                    return 'error'; // 失败显示红色
+                case 'completed':
+                    return 'success'; // 完成显示蓝色
+                default:
+                    return 'offline'; // 其他状态显示灰色
+            }
+        };
+
+        // 初始化实验信息
+        updateExperimentInfo();
+
+        // 定期更新实验状态
+        const experimentInfoUpdateInterval = setInterval(() => {
+            updateExperimentInfo();
+        }, 1000);
+
+        // 判断实验是否已经开始过（有实验状态记录）
+        const hasExperimentStarted = computed(() => {
+            const experiment = experimentInfo.value;
+            return experiment && experiment.status &&
+                   ['pretreatment', 'running', 'paused', 'completed', 'failed'].includes(experiment.status);
+        });
+
+        // 获取开始按钮的文本
+        const getStartButtonText = () => {
+            if (!isRunning.value) {
+                // 如果图表没有运行，根据实验是否已经开始过来显示文本
+                return hasExperimentStarted.value ? '继续' : '开始';
+            }
+            return '开始'; // 这个分支通常不会执行，因为有v-if="!isRunning"
+        };
 
         return {
             // 状态
@@ -2231,6 +2374,7 @@ export default {
             resetGradientValues,
 
             // 主要控制方法
+            startExperimentAPI,
             togglePause,
             restartChart,
             clearChartData,
@@ -2292,6 +2436,13 @@ export default {
             mqttReconnecting,
             handleMqttReconnect,
             handleMqttCancel,
+
+            // 实验流程状态
+            experimentInfo,
+            hasExperimentStarted,
+            getExperimentStepDisplayText,
+            getExperimentStepIndicatorClass,
+            getStartButtonText,
         };
     },
 };
@@ -2378,6 +2529,21 @@ export default {
 
 .status-indicator.offline {
     background-color: #909399;
+}
+
+.status-indicator.warning {
+    background-color: #e6a23c;
+    animation: pulse 2s infinite;
+}
+
+.status-indicator.error {
+    background-color: #f56c6c;
+    animation: pulse 2s infinite;
+}
+
+.status-indicator.success {
+    background-color: #409eff;
+    animation: pulse 2s infinite;
 }
 
 .status-text {

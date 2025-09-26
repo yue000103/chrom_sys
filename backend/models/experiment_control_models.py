@@ -80,9 +80,6 @@ class ExperimentListResponse(BaseModel):
     total_count: int = 0
 
 
-class UpdateExperimentStatusRequest(BaseModel):
-    """更新实验状态请求"""
-    status: str = Field(..., regex="^(已结束|未结束)$", description="实验状态")
 
 
 class ExperimentQueueStatusResponse(BaseModel):
@@ -99,6 +96,20 @@ class ExperimentStatisticsResponse(BaseModel):
     statistics: dict = {}
 
 
+class UpdateExperimentStatusRequest(BaseModel):
+    """更新实验状态请求"""
+    status: str = Field(..., description="实验状态：pending、pretreatment、running、paused、completed、terminated")
+    reason: Optional[str] = Field(None, description="状态变更原因")
+
+    class Config:
+        schema_extra = {
+            "example": {
+                "status": "paused",
+                "reason": "用户手动暂停"
+            }
+        }
+
+
 class ExperimentStatusResponse(BaseModel):
     """实验状态查询响应"""
     success: bool = True
@@ -109,6 +120,8 @@ class ExperimentStatusResponse(BaseModel):
     step_status: Optional[str] = Field(None, description="步骤状态：started、completed")
     is_paused: bool = False
     timestamp: datetime
+    progress_percentage: Optional[float] = Field(None, description="进度百分比")
+    phase: Optional[str] = Field(None, description="当前阶段")
 
     class Config:
         schema_extra = {
@@ -120,6 +133,8 @@ class ExperimentStatusResponse(BaseModel):
                 "current_step": "purge_column",
                 "step_status": "started",
                 "is_paused": False,
-                "timestamp": "2024-01-01T10:00:00Z"
+                "timestamp": "2024-01-01T10:00:00Z",
+                "progress_percentage": 25.5,
+                "phase": "preprocessing"
             }
         }

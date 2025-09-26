@@ -841,8 +841,7 @@ class ExperimentFunctionManager:
             errors.append("实验ID不能为空")
         if not config.method_id:
             errors.append("方法ID不能为空")
-        if not config.sample_id:
-            errors.append("样品ID不能为空")
+
 
         return {
             "valid": len(errors) == 0,

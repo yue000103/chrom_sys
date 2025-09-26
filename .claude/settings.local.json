@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(xxd:*)",
-      "Bash(npm install:*)"
+      "Bash(npm install:*)",
+      "Bash(grep:*)",
+      "Bash(netstat:*)"
     ],
     "deny": [],
     "ask": []
